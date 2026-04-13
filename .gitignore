@@ -2,6 +2,7 @@
 /ui/node_modules/
 /ui/build/
 /ui/.svelte-kit/
+crates/iris-app/gen/
 *.swp
 *.swo
 .DS_Store
