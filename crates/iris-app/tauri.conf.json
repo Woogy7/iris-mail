@@ -2,15 +2,23 @@
   "productName": "Iris Mail",
   "identifier": "com.irismail.app",
   "build": {
-    "frontendDist": "../../ui/build"
+    "frontendDist": "../../ui/build",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": "cd ../../ui && npm run dev",
+    "beforeBuildCommand": "cd ../../ui && npm run build"
   },
   "app": {
     "windows": [
       {
         "title": "Iris Mail",
         "width": 1200,
-        "height": 800
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 600
       }
-    ]
+    ],
+    "security": {
+      "csp": "default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' data:"
+    }
   }
 }
