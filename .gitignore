@@ -1,0 +1,9 @@
+/target/
+/ui/node_modules/
+/ui/build/
+/ui/.svelte-kit/
+*.swp
+*.swo
+.DS_Store
+.env
+.planning/
