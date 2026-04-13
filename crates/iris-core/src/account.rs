@@ -163,4 +163,63 @@ mod tests {
     fn default_accent_colour_is_mauve() {
         assert_eq!(AccentColour::default(), AccentColour::Mauve);
     }
+
+    #[test]
+    fn account_id_default_delegates_to_new() {
+        // Default should produce a valid (non-nil) UUID, same as new().
+        let id = AccountId::default();
+        assert_ne!(id.0, uuid::Uuid::nil());
+    }
+
+    #[test]
+    fn account_serialises_and_deserialises_via_json() {
+        let now = chrono::Utc::now();
+        let account = Account {
+            id: AccountId::new(),
+            display_name: "Work".to_owned(),
+            email_address: "work@example.com".to_owned(),
+            provider: Provider::M365,
+            keychain_ref: uuid::Uuid::new_v4(),
+            sync_preferences: SyncPreferences::default(),
+            accent_colour: AccentColour::Green,
+            created_at: now,
+            updated_at: now,
+        };
+
+        let json = serde_json::to_string(&account).expect("serialize");
+        let recovered: Account = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(account.id, recovered.id);
+        assert_eq!(account.display_name, recovered.display_name);
+        assert_eq!(account.email_address, recovered.email_address);
+        assert_eq!(account.provider, recovered.provider);
+        assert_eq!(account.accent_colour, recovered.accent_colour);
+        assert_eq!(
+            account.sync_preferences.initial_sync_days,
+            recovered.sync_preferences.initial_sync_days
+        );
+    }
+
+    #[test]
+    fn provider_has_three_variants() {
+        let variants = [Provider::M365, Provider::Gmail, Provider::ImapGeneric];
+        assert_eq!(variants.len(), 3);
+    }
+
+    #[test]
+    fn sync_preferences_custom_values_are_preserved() {
+        let prefs = SyncPreferences {
+            initial_sync_days: 30,
+            rate_limit_per_minute: 100,
+            poll_interval_secs: 60,
+            synced_tier_bytes: 10 * 1024 * 1024 * 1024,
+            is_archive_enabled: true,
+        };
+
+        assert_eq!(prefs.initial_sync_days, 30);
+        assert_eq!(prefs.rate_limit_per_minute, 100);
+        assert_eq!(prefs.poll_interval_secs, 60);
+        assert_eq!(prefs.synced_tier_bytes, 10 * 1024 * 1024 * 1024);
+        assert!(prefs.is_archive_enabled);
+    }
 }

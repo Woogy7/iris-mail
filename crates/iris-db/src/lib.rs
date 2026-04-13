@@ -366,4 +366,651 @@ mod tests {
         assert_eq!(fetched2.subject, Some("Hello World".to_owned()));
         assert_eq!(fetched2.from_name, Some("Alice".to_owned()));
     }
+
+    // --- Error path tests ---
+
+    #[tokio::test]
+    async fn get_nonexistent_account_returns_not_found() {
+        let pool = test_pool().await;
+        let fake_id = AccountId::new();
+
+        let result = AccountRepo::get_by_id(&pool, &fake_id).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::NotFound {
+                    entity: "account",
+                    ..
+                }
+            ),
+            "expected NotFound, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_nonexistent_folder_returns_not_found() {
+        let pool = test_pool().await;
+        let fake_id = FolderId::new();
+
+        let result = FolderRepo::get_by_id(&pool, &fake_id).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::NotFound {
+                    entity: "folder",
+                    ..
+                }
+            ),
+            "expected NotFound, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_nonexistent_message_returns_not_found() {
+        let pool = test_pool().await;
+        let fake_id = MessageId::new();
+
+        let result = MessageRepo::get_by_id(&pool, &fake_id).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::NotFound {
+                    entity: "message",
+                    ..
+                }
+            ),
+            "expected NotFound, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_nonexistent_attachment_returns_not_found() {
+        let pool = test_pool().await;
+        let fake_id = AttachmentId::new();
+
+        let result = AttachmentRepo::get_by_id(&pool, &fake_id).await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::NotFound {
+                    entity: "attachment",
+                    ..
+                }
+            ),
+            "expected NotFound, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_attachment_by_nonexistent_sha256_returns_not_found() {
+        let pool = test_pool().await;
+
+        let result = AttachmentRepo::get_by_sha256(&pool, "nonexistent_hash").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::NotFound {
+                    entity: "attachment",
+                    ..
+                }
+            ),
+            "expected NotFound, got: {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_account_returns_not_found() {
+        let pool = test_pool().await;
+        let fake_id = AccountId::new();
+
+        let result = AccountRepo::delete(&pool, &fake_id).await;
+        assert!(matches!(
+            result,
+            Err(Error::NotFound {
+                entity: "account",
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_folder_returns_not_found() {
+        let pool = test_pool().await;
+        let fake_id = FolderId::new();
+
+        let result = FolderRepo::delete(&pool, &fake_id).await;
+        assert!(matches!(
+            result,
+            Err(Error::NotFound {
+                entity: "folder",
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn delete_nonexistent_message_returns_not_found() {
+        let pool = test_pool().await;
+        let fake_id = MessageId::new();
+
+        let result = MessageRepo::delete(&pool, &fake_id).await;
+        assert!(matches!(
+            result,
+            Err(Error::NotFound {
+                entity: "message",
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_nonexistent_account_returns_not_found() {
+        let pool = test_pool().await;
+        let account = make_account();
+
+        let result = AccountRepo::update(&pool, &account).await;
+        assert!(matches!(
+            result,
+            Err(Error::NotFound {
+                entity: "account",
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn update_flags_on_nonexistent_message_returns_not_found() {
+        let pool = test_pool().await;
+        let fake_id = MessageId::new();
+        let flags = MessageFlags::default();
+
+        let result = MessageRepo::update_flags(&pool, &fake_id, &flags).await;
+        assert!(matches!(
+            result,
+            Err(Error::NotFound {
+                entity: "message",
+                ..
+            })
+        ));
+    }
+
+    // --- Cascade delete tests ---
+
+    #[tokio::test]
+    async fn deleting_account_cascades_to_folders_and_messages() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        // Delete the account.
+        AccountRepo::delete(&pool, &account.id)
+            .await
+            .expect("delete account");
+
+        // Folder should be gone.
+        let folder_result = FolderRepo::get_by_id(&pool, &folder.id).await;
+        assert!(matches!(
+            folder_result,
+            Err(Error::NotFound {
+                entity: "folder",
+                ..
+            })
+        ));
+
+        // Message should be gone.
+        let message_result = MessageRepo::get_by_id(&pool, &message.id).await;
+        assert!(matches!(
+            message_result,
+            Err(Error::NotFound {
+                entity: "message",
+                ..
+            })
+        ));
+    }
+
+    #[tokio::test]
+    async fn deleting_folder_cascades_to_messages() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        // Delete the folder; the account stays.
+        FolderRepo::delete(&pool, &folder.id)
+            .await
+            .expect("delete folder");
+
+        // Message should be gone.
+        let message_result = MessageRepo::get_by_id(&pool, &message.id).await;
+        assert!(matches!(
+            message_result,
+            Err(Error::NotFound {
+                entity: "message",
+                ..
+            })
+        ));
+
+        // Account should still be there.
+        let account_result = AccountRepo::get_by_id(&pool, &account.id).await;
+        assert!(account_result.is_ok());
+    }
+
+    // --- FTS5 trigger tests ---
+
+    #[tokio::test]
+    async fn fts5_trigger_indexes_message_on_insert() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        // The trigger should have created an FTS row with the subject.
+        let fts_count: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Hello'")
+                .fetch_one(&pool)
+                .await
+                .expect("fts query");
+
+        assert_eq!(fts_count.0, 1, "expected 1 FTS match for 'Hello'");
+    }
+
+    #[tokio::test]
+    async fn fts5_trigger_removes_row_on_message_delete() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        // Confirm FTS row exists.
+        let before: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Hello'")
+                .fetch_one(&pool)
+                .await
+                .expect("fts query before");
+        assert_eq!(before.0, 1);
+
+        // Delete the message.
+        MessageRepo::delete(&pool, &message.id)
+            .await
+            .expect("delete message");
+
+        // FTS row should be gone.
+        let after: (i64,) =
+            sqlx::query_as("SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Hello'")
+                .fetch_one(&pool)
+                .await
+                .expect("fts query after");
+        assert_eq!(after.0, 0);
+    }
+
+    #[tokio::test]
+    async fn fts5_body_trigger_indexes_plain_text() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        // Insert a message body with unique plain text.
+        let msg_id = message.id.0.to_string();
+        sqlx::query(
+            "INSERT INTO message_bodies (message_id, html, sanitised_html, plain_text) \
+             VALUES (?1, ?2, ?3, ?4)",
+        )
+        .bind(&msg_id)
+        .bind("<p>Supercalifragilistic</p>")
+        .bind("<p>Supercalifragilistic</p>")
+        .bind("Supercalifragilistic")
+        .execute(&pool)
+        .await
+        .expect("insert message body");
+
+        // The body trigger should have re-indexed with the plain text.
+        let fts_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Supercalifragilistic'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("fts body query");
+
+        assert_eq!(fts_count.0, 1, "expected 1 FTS match for body text");
+    }
+
+    // --- Folder ordering test ---
+
+    #[tokio::test]
+    async fn folders_are_listed_in_special_folder_priority_order() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let now = Utc::now();
+        let specials = [
+            ("Trash", "TRASH", SpecialFolder::Trash),
+            ("Zebra", "Zebra", SpecialFolder::Other),
+            ("Inbox", "INBOX", SpecialFolder::Inbox),
+            ("Drafts", "DRAFTS", SpecialFolder::Drafts),
+            ("Sent", "SENT", SpecialFolder::Sent),
+            ("Alpha", "Alpha", SpecialFolder::Other),
+            ("Archive", "ARCHIVE", SpecialFolder::Archive),
+        ];
+
+        for (name, path, special) in &specials {
+            let folder = Folder {
+                id: FolderId::new(),
+                account_id: account.id,
+                parent_id: None,
+                name: name.to_string(),
+                full_path: path.to_string(),
+                special: *special,
+                uid_validity: None,
+                last_seen_uid: None,
+                message_count: 0,
+                unread_count: 0,
+                last_synced_at: None,
+                created_at: now,
+                updated_at: now,
+            };
+            FolderRepo::insert(&pool, &folder)
+                .await
+                .expect("insert folder");
+        }
+
+        let folders = FolderRepo::list_by_account(&pool, &account.id)
+            .await
+            .expect("list folders");
+
+        let names: Vec<&str> = folders.iter().map(|f| f.name.as_str()).collect();
+        // Expected order: Inbox(0), Sent(1), Drafts(2), Trash(3), Archive(4), then Other alphabetically
+        assert_eq!(
+            names,
+            vec![
+                "Inbox", "Sent", "Drafts", "Trash", "Archive", "Alpha", "Zebra"
+            ]
+        );
+    }
+
+    // --- Attachment link and list tests ---
+
+    #[tokio::test]
+    async fn attachment_link_to_message_and_list_by_message() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        let attachment = Attachment {
+            id: AttachmentId::new(),
+            sha256: "unique_hash_001".to_owned(),
+            size_bytes: 5000,
+            mime_type: "image/jpeg".to_owned(),
+            filename: None,
+        };
+        AttachmentRepo::insert(&pool, &attachment)
+            .await
+            .expect("insert attachment");
+
+        // Link attachment to message with a filename.
+        AttachmentRepo::link_to_message(
+            &pool,
+            &message.id,
+            &attachment.id,
+            Some("photo.jpg"),
+            "image/jpeg",
+        )
+        .await
+        .expect("link attachment");
+
+        // List attachments for the message.
+        let attachments = AttachmentRepo::list_by_message(&pool, &message.id)
+            .await
+            .expect("list attachments");
+
+        assert_eq!(attachments.len(), 1);
+        assert_eq!(attachments[0].id, attachment.id);
+        assert_eq!(attachments[0].sha256, "unique_hash_001");
+        assert_eq!(attachments[0].filename.as_deref(), Some("photo.jpg"));
+    }
+
+    #[tokio::test]
+    async fn list_attachments_for_message_with_no_attachments_returns_empty() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        let attachments = AttachmentRepo::list_by_message(&pool, &message.id)
+            .await
+            .expect("list attachments");
+
+        assert!(attachments.is_empty());
+    }
+
+    // --- Message pagination test ---
+
+    #[tokio::test]
+    async fn message_list_by_folder_respects_limit_and_offset() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        // Insert 5 messages with different dates.
+        for i in 0..5 {
+            let now = Utc::now();
+            let mut msg = make_message(account.id, folder.id);
+            msg.id = MessageId::new();
+            msg.uid = Some(i + 1);
+            msg.subject = Some(format!("Message {i}"));
+            msg.date = Some(now + chrono::Duration::minutes(i as i64));
+            msg.message_id_header = Some(format!("<msg{i}@example.com>"));
+            MessageRepo::insert(&pool, &msg)
+                .await
+                .expect("insert message");
+        }
+
+        // List all.
+        let all = MessageRepo::list_by_folder(&pool, &folder.id, 100, 0)
+            .await
+            .expect("list all");
+        assert_eq!(all.len(), 5);
+
+        // Limit to 2.
+        let limited = MessageRepo::list_by_folder(&pool, &folder.id, 2, 0)
+            .await
+            .expect("list limited");
+        assert_eq!(limited.len(), 2);
+
+        // Offset 3, limit 100 should give 2 remaining.
+        let offset = MessageRepo::list_by_folder(&pool, &folder.id, 100, 3)
+            .await
+            .expect("list offset");
+        assert_eq!(offset.len(), 2);
+    }
+
+    // --- All database tables exist test ---
+
+    #[tokio::test]
+    async fn all_eight_tables_exist_after_migration() {
+        let pool = test_pool().await;
+
+        let expected_tables = [
+            "accounts",
+            "folders",
+            "messages",
+            "message_bodies",
+            "attachments",
+            "message_attachments",
+            "messages_fts",
+            "sync_jobs",
+        ];
+
+        for table in &expected_tables {
+            let query = format!(
+                "SELECT name FROM sqlite_master WHERE type IN ('table', 'view') AND name = '{table}'"
+            );
+            let row: Option<(String,)> = sqlx::query_as(&query)
+                .fetch_optional(&pool)
+                .await
+                .unwrap_or_else(|_| panic!("query for table {table}"));
+            assert!(row.is_some(), "expected table '{table}' to exist");
+        }
+    }
+
+    // --- WAL mode test ---
+    // Note: In-memory SQLite always returns "memory" for journal_mode,
+    // so we test with a temporary file-backed database instead.
+
+    #[tokio::test]
+    async fn database_uses_wal_journal_mode() {
+        let dir = std::env::temp_dir().join(format!("iris_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        let db_path = dir.join("test.db");
+        let url = format!("sqlite:{}?mode=rwc", db_path.display());
+
+        let pool = create_pool(&url).await.expect("create file-backed pool");
+
+        let mode: (String,) = sqlx::query_as("PRAGMA journal_mode")
+            .fetch_one(&pool)
+            .await
+            .expect("pragma journal_mode");
+
+        assert_eq!(mode.0, "wal", "expected WAL journal mode");
+
+        pool.close().await;
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // --- Foreign keys enabled test ---
+
+    #[tokio::test]
+    async fn foreign_keys_are_enabled() {
+        let pool = test_pool().await;
+
+        let fk: (i64,) = sqlx::query_as("PRAGMA foreign_keys")
+            .fetch_one(&pool)
+            .await
+            .expect("pragma foreign_keys");
+
+        assert_eq!(fk.0, 1, "expected foreign_keys = 1 (enabled)");
+    }
+
+    // --- Multiple accounts test ---
+
+    #[tokio::test]
+    async fn list_accounts_returns_all_in_display_name_order() {
+        let pool = test_pool().await;
+
+        let mut account_a = make_account();
+        account_a.display_name = "Zebra Account".to_owned();
+        AccountRepo::insert(&pool, &account_a)
+            .await
+            .expect("insert a");
+
+        let mut account_b = make_account();
+        account_b.display_name = "Alpha Account".to_owned();
+        AccountRepo::insert(&pool, &account_b)
+            .await
+            .expect("insert b");
+
+        let all = AccountRepo::list(&pool).await.expect("list");
+        assert_eq!(all.len(), 2);
+        assert_eq!(all[0].display_name, "Alpha Account");
+        assert_eq!(all[1].display_name, "Zebra Account");
+    }
 }

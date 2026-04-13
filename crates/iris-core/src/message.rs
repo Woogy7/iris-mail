@@ -154,6 +154,65 @@ mod tests {
         assert_eq!(msg.storage_state(), None);
     }
 
+    #[test]
+    fn message_flags_default_is_all_false() {
+        let flags = MessageFlags::default();
+        assert!(!flags.is_read);
+        assert!(!flags.is_flagged);
+        assert!(!flags.is_answered);
+    }
+
+    #[test]
+    fn message_id_generates_unique_values() {
+        let a = MessageId::new();
+        let b = MessageId::new();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn message_id_default_produces_non_nil_uuid() {
+        let id = MessageId::default();
+        assert_ne!(id.0, uuid::Uuid::nil());
+    }
+
+    #[test]
+    fn message_body_holds_all_content_variants() {
+        let body = MessageBody {
+            message_id: MessageId::new(),
+            html: Some("<p>Hello</p>".to_owned()),
+            sanitised_html: Some("<p>Hello</p>".to_owned()),
+            plain_text: Some("Hello".to_owned()),
+        };
+
+        assert!(body.html.is_some());
+        assert!(body.sanitised_html.is_some());
+        assert!(body.plain_text.is_some());
+    }
+
+    #[test]
+    fn message_body_can_have_all_none_content() {
+        let body = MessageBody {
+            message_id: MessageId::new(),
+            html: None,
+            sanitised_html: None,
+            plain_text: None,
+        };
+
+        assert!(body.html.is_none());
+        assert!(body.sanitised_html.is_none());
+        assert!(body.plain_text.is_none());
+    }
+
+    #[test]
+    fn storage_state_enum_has_three_variants() {
+        let variants = [
+            StorageState::SyncedBoth,
+            StorageState::LocalOnly,
+            StorageState::RemoteOnly,
+        ];
+        assert_eq!(variants.len(), 3);
+    }
+
     fn make_message(is_stored_local: bool, is_stored_remote: bool) -> Message {
         let now = Utc::now();
         Message {

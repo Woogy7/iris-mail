@@ -119,4 +119,60 @@ mod tests {
     fn archive_is_not_tierable() {
         assert!(!SpecialFolder::Archive.is_tierable());
     }
+
+    #[test]
+    fn folder_id_generates_unique_values() {
+        let a = FolderId::new();
+        let b = FolderId::new();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn folder_id_default_produces_non_nil_uuid() {
+        let id = FolderId::default();
+        assert_ne!(id.0, uuid::Uuid::nil());
+    }
+
+    #[test]
+    fn folder_serialises_and_deserialises_via_json() {
+        let now = chrono::Utc::now();
+        let folder = Folder {
+            id: FolderId::new(),
+            account_id: crate::AccountId::new(),
+            parent_id: None,
+            name: "Receipts".to_owned(),
+            full_path: "INBOX/Receipts".to_owned(),
+            special: SpecialFolder::Other,
+            uid_validity: Some(99999),
+            last_seen_uid: Some(500),
+            message_count: 42,
+            unread_count: 7,
+            last_synced_at: Some(now),
+            created_at: now,
+            updated_at: now,
+        };
+
+        let json = serde_json::to_string(&folder).expect("serialize");
+        let recovered: Folder = serde_json::from_str(&json).expect("deserialize");
+
+        assert_eq!(folder.id, recovered.id);
+        assert_eq!(folder.name, recovered.name);
+        assert_eq!(folder.full_path, recovered.full_path);
+        assert_eq!(folder.special, recovered.special);
+        assert_eq!(folder.uid_validity, recovered.uid_validity);
+        assert_eq!(folder.message_count, recovered.message_count);
+    }
+
+    #[test]
+    fn special_folder_has_six_variants() {
+        let variants = [
+            SpecialFolder::Inbox,
+            SpecialFolder::Sent,
+            SpecialFolder::Drafts,
+            SpecialFolder::Trash,
+            SpecialFolder::Archive,
+            SpecialFolder::Other,
+        ];
+        assert_eq!(variants.len(), 6);
+    }
 }

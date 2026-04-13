@@ -19,3 +19,35 @@ pub enum Error {
 
 /// Convenience alias for results using the core [`Error`] type.
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_email_error_displays_address() {
+        let err = Error::InvalidEmail("not-an-email".to_owned());
+        let msg = err.to_string();
+        assert!(
+            msg.contains("not-an-email"),
+            "expected address in message: {msg}"
+        );
+    }
+
+    #[test]
+    fn invalid_folder_path_error_displays_path() {
+        let err = Error::InvalidFolderPath("".to_owned());
+        let msg = err.to_string();
+        assert!(
+            msg.contains("invalid folder path"),
+            "expected prefix: {msg}"
+        );
+    }
+
+    #[test]
+    fn invalid_colour_error_displays_value() {
+        let err = Error::InvalidColour("neon".to_owned());
+        let msg = err.to_string();
+        assert!(msg.contains("neon"), "expected value in message: {msg}");
+    }
+}
