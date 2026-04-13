@@ -10,11 +10,16 @@ pub enum Error {
     Migration(#[from] sqlx::migrate::MigrateError),
 
     /// A requested record was not found.
-    #[error("record not found: {0}")]
-    NotFound(String),
+    #[error("record not found: {entity} with id {id}")]
+    NotFound {
+        /// The kind of entity that was looked up (e.g. "account", "folder").
+        entity: &'static str,
+        /// The identifier value that was not matched.
+        id: String,
+    },
 
     /// JSON serialisation or deserialisation of a database column failed.
-    #[error("JSON error: {0}")]
+    #[error("serialization error: {0}")]
     Json(#[from] serde_json::Error),
 }
 
