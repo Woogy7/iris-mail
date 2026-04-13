@@ -1,0 +1,16 @@
+{
+  "productName": "Iris Mail",
+  "identifier": "com.irismail.app",
+  "build": {
+    "frontendDist": "../../ui/build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "Iris Mail",
+        "width": 1200,
+        "height": 800
+      }
+    ]
+  }
+}

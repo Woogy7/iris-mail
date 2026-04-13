@@ -1,0 +1,19 @@
+[package]
+name = "iris-db"
+description = "SQLite schema, migrations, and typed repository queries for Iris Mail."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+iris-core.workspace = true
+sqlx.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+tokio.workspace = true

@@ -1,0 +1,12 @@
+[package]
+name = "iris-mail"
+description = "IMAP, SMTP, and OAuth protocol layer for Iris Mail."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+iris-core.workspace = true
+thiserror.workspace = true

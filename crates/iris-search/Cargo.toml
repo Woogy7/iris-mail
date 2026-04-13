@@ -1,0 +1,13 @@
+[package]
+name = "iris-search"
+description = "Query language parser and FTS5 search execution for Iris Mail."
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+iris-core.workspace = true
+iris-db.workspace = true
+thiserror.workspace = true

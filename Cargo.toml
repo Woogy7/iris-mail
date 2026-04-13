@@ -1,0 +1,39 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/iris-core",
+    "crates/iris-db",
+    "crates/iris-mail",
+    "crates/iris-search",
+    "crates/iris-sync",
+    "crates/iris-import",
+    "crates/iris-app",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Michael Blake"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/Woogy7/iris-mail"
+
+[workspace.dependencies]
+iris-core = { path = "crates/iris-core" }
+iris-db = { path = "crates/iris-db" }
+iris-mail = { path = "crates/iris-mail" }
+iris-search = { path = "crates/iris-search" }
+iris-sync = { path = "crates/iris-sync" }
+iris-import = { path = "crates/iris-import" }
+
+tokio = { version = "1", features = ["full"] }
+thiserror = "2.0"
+anyhow = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "migrate", "chrono", "uuid"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tauri = { version = "2", features = [] }
+tauri-build = "2"
