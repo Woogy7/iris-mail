@@ -37,3 +37,16 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tauri = { version = "2", features = [] }
 tauri-build = "2"
+oauth2 = "5.0"
+keyring = { version = "3", features = ["linux-native"] }
+async-imap = "0.10"
+async-native-tls = "0.5"
+lettre = { version = "0.11", default-features = false, features = ["tokio1-native-tls", "smtp-transport", "builder"] }
+mail-parser = "0.9"
+ammonia = "4"
+html2text = "0.14"
+hickory-resolver = { version = "0.25", features = ["tokio"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
+url = "2"
+base64 = "0.22"
+rand = "0.9"

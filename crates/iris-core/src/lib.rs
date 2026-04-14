@@ -9,6 +9,7 @@ mod attachment;
 mod error;
 mod folder;
 mod message;
+mod server;
 mod sync_state;
 
 pub use account::{AccentColour, Account, AccountId, Provider, SyncPreferences};
@@ -16,4 +17,5 @@ pub use attachment::{Attachment, AttachmentId};
 pub use error::{Error, Result};
 pub use folder::{Folder, FolderId, SpecialFolder};
 pub use message::{Message, MessageBody, MessageFlags, MessageId, StorageState};
+pub use server::{ImapServer, ServerConfig, SmtpServer};
 pub use sync_state::{SyncPhase, SyncState};
