@@ -1,22 +1,38 @@
 import { invoke } from '@tauri-apps/api/core';
 
+export interface MessageFlags {
+  is_read: boolean;
+  is_flagged: boolean;
+  is_answered: boolean;
+}
+
 export interface Message {
   id: string;
-  folder_id: string;
   account_id: string;
-  subject: string;
+  folder_id: string;
+  uid: number | null;
+  message_id_header: string | null;
+  thread_id: string | null;
+  subject: string | null;
   from_name: string | null;
-  from_address: string;
-  date: string;
-  size_bytes: number;
-  flags: {
-    is_read: boolean;
-    is_flagged: boolean;
-    is_answered: boolean;
-  };
-  stored_local: boolean;
-  stored_remote: boolean;
-  has_attachment: boolean;
+  from_address: string | null;
+  to_addresses: string | null;
+  cc_addresses: string | null;
+  bcc_addresses: string | null;
+  date: string | null;
+  size_bytes: number | null;
+  flags: MessageFlags;
+  is_stored_local: boolean;
+  is_stored_remote: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MessageBody {
+  message_id: string;
+  html: string | null;
+  sanitised_html: string | null;
+  plain_text: string | null;
 }
 
 export async function listMessages(
@@ -25,4 +41,15 @@ export async function listMessages(
   offset?: number,
 ): Promise<Message[]> {
   return invoke<Message[]>('list_messages', { folderId, limit, offset });
+}
+
+export async function fetchFolderMessages(
+  accountId: string,
+  folderId: string,
+): Promise<Message[]> {
+  return invoke<Message[]>('fetch_folder_messages', { accountId, folderId });
+}
+
+export async function getMessageBody(messageId: string): Promise<MessageBody> {
+  return invoke<MessageBody>('get_message_body', { messageId });
 }
