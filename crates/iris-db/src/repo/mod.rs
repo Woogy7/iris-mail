@@ -7,8 +7,10 @@ mod account;
 mod attachment;
 mod folder;
 mod message;
+mod message_body;
 
 pub use account::AccountRepo;
 pub use attachment::AttachmentRepo;
 pub use folder::FolderRepo;
 pub use message::MessageRepo;
+pub use message_body::MessageBodyRepo;

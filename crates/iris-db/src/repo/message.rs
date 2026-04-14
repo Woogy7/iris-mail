@@ -119,6 +119,110 @@ impl MessageRepo {
         Ok(())
     }
 
+    /// Insert multiple messages in a single transaction.
+    ///
+    /// Skips messages whose primary key already exists. Returns the number
+    /// of rows actually inserted.
+    pub async fn insert_batch(pool: &SqlitePool, messages: &[Message]) -> Result<u64> {
+        let mut tx = pool.begin().await?;
+        let mut count = 0u64;
+
+        for message in messages {
+            let id = message.id.0.to_string();
+            let folder_id = message.folder_id.0.to_string();
+            let account_id = message.account_id.0.to_string();
+            let date = message.date.map(|d| d.to_rfc3339());
+            let size_bytes = message.size_bytes.map(|s| s as i64);
+            let imap_uid = message.uid.map(|u| u as i64);
+            let created_at = message.created_at.to_rfc3339();
+            let updated_at = message.updated_at.to_rfc3339();
+
+            let result = sqlx::query(
+                "INSERT OR IGNORE INTO messages \
+                 (id, folder_id, account_id, subject, from_name, \
+                 from_address, to_addresses, cc_addresses, bcc_addresses, \
+                 date, size_bytes, is_read, is_flagged, is_answered, \
+                 thread_id, message_id_header, imap_uid, stored_local, \
+                 stored_remote, created_at, updated_at) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, \
+                 ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+            )
+            .bind(&id)
+            .bind(&folder_id)
+            .bind(&account_id)
+            .bind(message.subject.as_deref().unwrap_or(""))
+            .bind(message.from_name.as_deref())
+            .bind(message.from_address.as_deref())
+            .bind(message.to_addresses.as_deref().unwrap_or("[]"))
+            .bind(message.cc_addresses.as_deref().unwrap_or("[]"))
+            .bind(message.bcc_addresses.as_deref().unwrap_or("[]"))
+            .bind(&date)
+            .bind(size_bytes)
+            .bind(message.flags.is_read)
+            .bind(message.flags.is_flagged)
+            .bind(message.flags.is_answered)
+            .bind(message.thread_id.as_deref())
+            .bind(message.message_id_header.as_deref())
+            .bind(imap_uid)
+            .bind(message.is_stored_local)
+            .bind(message.is_stored_remote)
+            .bind(&created_at)
+            .bind(&updated_at)
+            .execute(&mut *tx)
+            .await?;
+
+            count += result.rows_affected();
+        }
+
+        tx.commit().await?;
+        Ok(count)
+    }
+
+    /// Look up a message by its IMAP UID within a folder.
+    ///
+    /// Returns `None` if no message with that UID exists in the folder.
+    pub async fn get_by_uid(
+        pool: &SqlitePool,
+        folder_id: &FolderId,
+        uid: u32,
+    ) -> Result<Option<Message>> {
+        let folder_id_str = folder_id.0.to_string();
+
+        let row = sqlx::query(
+            "SELECT * FROM messages \
+             WHERE folder_id = ?1 AND imap_uid = ?2",
+        )
+        .bind(&folder_id_str)
+        .bind(uid as i64)
+        .fetch_optional(pool)
+        .await?;
+
+        match row {
+            Some(row) => Ok(Some(message_from_row(&row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Count total and unread messages in a folder.
+    ///
+    /// Returns a `(total, unread)` tuple.
+    pub async fn count_by_folder(pool: &SqlitePool, folder_id: &FolderId) -> Result<(u32, u32)> {
+        let folder_id_str = folder_id.0.to_string();
+
+        let row = sqlx::query(
+            "SELECT COUNT(*) AS total, \
+             SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) AS unread \
+             FROM messages WHERE folder_id = ?1",
+        )
+        .bind(&folder_id_str)
+        .fetch_one(pool)
+        .await?;
+
+        let total: i64 = row.get("total");
+        let unread: Option<i64> = row.get("unread");
+        Ok((total as u32, unread.unwrap_or(0) as u32))
+    }
+
     /// Deletes a message by its identifier.
     pub async fn delete(pool: &SqlitePool, id: &MessageId) -> Result<()> {
         let id_str = id.0.to_string();

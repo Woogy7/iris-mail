@@ -49,6 +49,50 @@ impl FolderRepo {
         Ok(())
     }
 
+    /// Insert a folder if it does not exist, or replace it if it does.
+    ///
+    /// Matches by the folder's primary key (id). All columns are overwritten
+    /// on conflict, which makes this suitable for syncing remote folder lists.
+    pub async fn upsert(pool: &SqlitePool, folder: &Folder) -> Result<()> {
+        let id = folder.id.0.to_string();
+        let account_id = folder.account_id.0.to_string();
+        let parent_id = folder.parent_id.map(|p| p.0.to_string());
+        let special = special_folder_to_str(folder.special);
+        let uid_validity = folder.uid_validity.map(|v| v as i64);
+        let last_seen_uid = folder.last_seen_uid.map(|v| v as i64);
+        let last_synced_at = folder.last_synced_at.map(|dt| dt.to_rfc3339());
+        let message_count = folder.message_count as i64;
+        let unread_count = folder.unread_count as i64;
+        let created_at = folder.created_at.to_rfc3339();
+        let updated_at = folder.updated_at.to_rfc3339();
+
+        sqlx::query(
+            "INSERT OR REPLACE INTO folders \
+             (id, account_id, name, full_path, parent_id, special, \
+             uid_validity, last_seen_uid, last_synced_at, message_count, \
+             unread_count, created_at, updated_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, \
+             ?12, ?13)",
+        )
+        .bind(&id)
+        .bind(&account_id)
+        .bind(&folder.name)
+        .bind(&folder.full_path)
+        .bind(&parent_id)
+        .bind(special)
+        .bind(uid_validity)
+        .bind(last_seen_uid)
+        .bind(&last_synced_at)
+        .bind(message_count)
+        .bind(unread_count)
+        .bind(&created_at)
+        .bind(&updated_at)
+        .execute(pool)
+        .await?;
+
+        Ok(())
+    }
+
     /// Retrieves a folder by its identifier.
     pub async fn get_by_id(pool: &SqlitePool, id: &FolderId) -> Result<Folder> {
         let id_str = id.0.to_string();

@@ -8,7 +8,7 @@ mod error;
 pub mod repo;
 
 pub use error::{Error, Result};
-pub use repo::{AccountRepo, AttachmentRepo, FolderRepo, MessageRepo};
+pub use repo::{AccountRepo, AttachmentRepo, FolderRepo, MessageBodyRepo, MessageRepo};
 
 use sqlx::SqlitePool;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
@@ -41,7 +41,7 @@ mod tests {
 
     use iris_core::{
         AccentColour, Account, AccountId, Attachment, AttachmentId, Folder, FolderId, Message,
-        MessageFlags, MessageId, Provider, SpecialFolder, SyncPreferences,
+        MessageBody, MessageFlags, MessageId, Provider, SpecialFolder, SyncPreferences,
     };
 
     use super::*;
@@ -1012,5 +1012,337 @@ mod tests {
         assert_eq!(all.len(), 2);
         assert_eq!(all[0].display_name, "Alpha Account");
         assert_eq!(all[1].display_name, "Zebra Account");
+    }
+
+    // --- MessageBodyRepo tests ---
+
+    #[tokio::test]
+    async fn message_body_upsert_and_retrieve_round_trip() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        let body = MessageBody {
+            message_id: message.id,
+            html: Some("<p>Hello, world!</p>".to_owned()),
+            sanitised_html: None,
+            plain_text: None,
+        };
+
+        MessageBodyRepo::upsert(&pool, &body)
+            .await
+            .expect("upsert body");
+
+        let fetched = MessageBodyRepo::get_by_message_id(&pool, &message.id)
+            .await
+            .expect("get body");
+
+        let fetched = fetched.expect("body should exist");
+        assert_eq!(fetched.message_id, message.id);
+        assert_eq!(fetched.html, Some("<p>Hello, world!</p>".to_owned()));
+        // sanitised_html and plain_text should have been auto-derived.
+        assert!(fetched.sanitised_html.is_some());
+        assert!(fetched.plain_text.is_some());
+    }
+
+    #[tokio::test]
+    async fn message_body_upsert_auto_sanitises_html() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        let body = MessageBody {
+            message_id: message.id,
+            html: Some("<p>Safe</p><script>alert('xss')</script>".to_owned()),
+            sanitised_html: None,
+            plain_text: None,
+        };
+
+        MessageBodyRepo::upsert(&pool, &body)
+            .await
+            .expect("upsert body");
+
+        let fetched = MessageBodyRepo::get_by_message_id(&pool, &message.id)
+            .await
+            .expect("get body")
+            .expect("body should exist");
+
+        let sanitised = fetched.sanitised_html.expect("sanitised should exist");
+        assert!(
+            !sanitised.contains("script"),
+            "script tags should be stripped: {sanitised}"
+        );
+        assert!(
+            sanitised.contains("Safe"),
+            "safe content should remain: {sanitised}"
+        );
+    }
+
+    #[tokio::test]
+    async fn message_body_get_returns_none_when_missing() {
+        let pool = test_pool().await;
+        let fake_id = MessageId::new();
+
+        let result = MessageBodyRepo::get_by_message_id(&pool, &fake_id)
+            .await
+            .expect("get should not error");
+
+        assert!(result.is_none());
+    }
+
+    // --- MessageRepo batch / uid / count tests ---
+
+    #[tokio::test]
+    async fn message_batch_insert_creates_all_rows() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let messages: Vec<Message> = (0..5)
+            .map(|i| {
+                let mut msg = make_message(account.id, folder.id);
+                msg.id = MessageId::new();
+                msg.uid = Some(100 + i);
+                msg.subject = Some(format!("Batch message {i}"));
+                msg.message_id_header = Some(format!("<batch{i}@example.com>"));
+                msg
+            })
+            .collect();
+
+        let inserted = MessageRepo::insert_batch(&pool, &messages)
+            .await
+            .expect("batch insert");
+
+        assert_eq!(inserted, 5);
+
+        let all = MessageRepo::list_by_folder(&pool, &folder.id, 100, 0)
+            .await
+            .expect("list messages");
+
+        assert_eq!(all.len(), 5);
+    }
+
+    #[tokio::test]
+    async fn message_batch_insert_skips_duplicates() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        // Batch-insert the same message again plus a new one.
+        let mut new_msg = make_message(account.id, folder.id);
+        new_msg.id = MessageId::new();
+        new_msg.uid = Some(99);
+        new_msg.message_id_header = Some("<new@example.com>".to_owned());
+
+        let batch = vec![message, new_msg];
+        let inserted = MessageRepo::insert_batch(&pool, &batch)
+            .await
+            .expect("batch insert");
+
+        // Only the new one should have been inserted.
+        assert_eq!(inserted, 1);
+    }
+
+    #[tokio::test]
+    async fn get_message_by_uid_returns_correct_message() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        let fetched = MessageRepo::get_by_uid(&pool, &folder.id, 42)
+            .await
+            .expect("get by uid");
+
+        let fetched = fetched.expect("message should exist");
+        assert_eq!(fetched.id, message.id);
+        assert_eq!(fetched.uid, Some(42));
+    }
+
+    #[tokio::test]
+    async fn get_message_by_uid_returns_none_when_not_found() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let result = MessageRepo::get_by_uid(&pool, &folder.id, 9999)
+            .await
+            .expect("get by uid should not error");
+
+        assert!(result.is_none());
+    }
+
+    #[tokio::test]
+    async fn count_by_folder_returns_correct_totals() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        // Insert 3 messages: 1 read, 2 unread.
+        for i in 0..3 {
+            let mut msg = make_message(account.id, folder.id);
+            msg.id = MessageId::new();
+            msg.uid = Some(200 + i);
+            msg.message_id_header = Some(format!("<count{i}@example.com>"));
+            if i == 0 {
+                msg.flags.is_read = true;
+            }
+            MessageRepo::insert(&pool, &msg)
+                .await
+                .expect("insert message");
+        }
+
+        let (total, unread) = MessageRepo::count_by_folder(&pool, &folder.id)
+            .await
+            .expect("count by folder");
+
+        assert_eq!(total, 3);
+        assert_eq!(unread, 2);
+    }
+
+    #[tokio::test]
+    async fn count_by_folder_returns_zero_for_empty_folder() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let (total, unread) = MessageRepo::count_by_folder(&pool, &folder.id)
+            .await
+            .expect("count by folder");
+
+        assert_eq!(total, 0);
+        assert_eq!(unread, 0);
+    }
+
+    // --- FolderRepo upsert tests ---
+
+    #[tokio::test]
+    async fn folder_upsert_inserts_new_folder() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::upsert(&pool, &folder)
+            .await
+            .expect("upsert folder");
+
+        let fetched = FolderRepo::get_by_id(&pool, &folder.id)
+            .await
+            .expect("get folder");
+        assert_eq!(fetched.name, "Inbox");
+    }
+
+    #[tokio::test]
+    async fn folder_upsert_updates_existing_folder() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        // Upsert with a changed name and counts.
+        let mut updated = folder.clone();
+        updated.name = "Updated Inbox".to_owned();
+        updated.message_count = 50;
+        updated.unread_count = 10;
+        FolderRepo::upsert(&pool, &updated)
+            .await
+            .expect("upsert folder");
+
+        let fetched = FolderRepo::get_by_id(&pool, &folder.id)
+            .await
+            .expect("get folder");
+        assert_eq!(fetched.name, "Updated Inbox");
+        assert_eq!(fetched.message_count, 50);
+        assert_eq!(fetched.unread_count, 10);
+
+        // Should still be just one folder.
+        let all = FolderRepo::list_by_account(&pool, &account.id)
+            .await
+            .expect("list folders");
+        assert_eq!(all.len(), 1);
     }
 }
