@@ -8,12 +8,55 @@ pub mod imap;
 pub mod oauth;
 mod smtp;
 
+pub use oauth::{OauthTokens, keychain::KeychainStore};
+
 /// Errors that can occur in the mail protocol layer.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// Placeholder until real protocol errors are implemented.
-    #[error("not implemented")]
-    NotImplemented,
+    /// An error originating from an OAuth2 flow.
+    #[error("OAuth error: {0}")]
+    Oauth(String),
+
+    /// The requested token was not found in the keychain.
+    #[error("token not found for account {0}")]
+    TokenNotFound(String),
+
+    /// A token refresh attempt failed.
+    #[error("token refresh failed: {0}")]
+    TokenRefreshFailed(String),
+
+    /// An error from the OS keychain.
+    #[error("keychain error: {0}")]
+    Keychain(String),
+
+    /// An IMAP protocol error.
+    #[error("IMAP error: {0}")]
+    Imap(String),
+
+    /// An SMTP protocol error.
+    #[error("SMTP error: {0}")]
+    Smtp(String),
+
+    /// Automatic server discovery failed for the given domain.
+    #[error("server discovery failed for domain {domain}: {reason}")]
+    Discovery {
+        /// The domain that was being resolved.
+        domain: String,
+        /// Why discovery failed.
+        reason: String,
+    },
+
+    /// A network operation timed out.
+    #[error("connection timeout after {0} seconds")]
+    Timeout(u64),
+
+    /// Failed to parse a mail message.
+    #[error("message parse error: {0}")]
+    MessageParse(String),
+
+    /// Functionality that is not yet implemented.
+    #[error("not implemented: {0}")]
+    NotImplemented(String),
 }
 
 /// Convenience alias for results using the mail [`Error`] type.
