@@ -60,6 +60,7 @@ pub async fn fetch_folder_messages(
             account_id: account.id,
             folder_id: folder.id,
             uid: Some(f.uid),
+            remote_id: None,
             message_id_header: f.message_id,
             thread_id: None,
             subject: f.subject,

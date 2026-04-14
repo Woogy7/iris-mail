@@ -97,6 +97,7 @@ mod tests {
             account_id,
             folder_id,
             uid: Some(42),
+            remote_id: None,
             message_id_header: Some("<abc@example.com>".to_owned()),
             thread_id: None,
             subject: Some("Hello World".to_owned()),

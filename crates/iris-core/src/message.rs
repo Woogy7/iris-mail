@@ -63,6 +63,12 @@ pub struct Message {
     pub folder_id: FolderId,
     /// IMAP UID within the folder.
     pub uid: Option<u32>,
+    /// Provider-specific remote identifier for this message.
+    ///
+    /// For M365 Graph accounts this is the opaque Graph message ID.
+    /// For IMAP accounts this is `None` — the `uid` field serves
+    /// as the remote identifier instead.
+    pub remote_id: Option<String>,
     /// The RFC 2822 Message-ID header value.
     pub message_id_header: Option<String>,
     /// Thread identifier for conversation grouping.
@@ -220,6 +226,7 @@ mod tests {
             account_id: crate::AccountId::new(),
             folder_id: crate::FolderId::new(),
             uid: None,
+            remote_id: None,
             message_id_header: None,
             thread_id: None,
             subject: None,

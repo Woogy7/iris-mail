@@ -23,9 +23,9 @@ impl MessageRepo {
             "INSERT INTO messages (id, folder_id, account_id, subject, from_name, \
              from_address, to_addresses, cc_addresses, bcc_addresses, date, size_bytes, \
              is_read, is_flagged, is_answered, thread_id, message_id_header, imap_uid, \
-             stored_local, stored_remote, created_at, updated_at) \
+             remote_id, stored_local, stored_remote, created_at, updated_at) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, \
-             ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+             ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
         )
         .bind(&id)
         .bind(&folder_id)
@@ -44,6 +44,7 @@ impl MessageRepo {
         .bind(message.thread_id.as_deref())
         .bind(message.message_id_header.as_deref())
         .bind(imap_uid)
+        .bind(message.remote_id.as_deref())
         .bind(message.is_stored_local)
         .bind(message.is_stored_remote)
         .bind(&created_at)
@@ -142,10 +143,11 @@ impl MessageRepo {
                  (id, folder_id, account_id, subject, from_name, \
                  from_address, to_addresses, cc_addresses, bcc_addresses, \
                  date, size_bytes, is_read, is_flagged, is_answered, \
-                 thread_id, message_id_header, imap_uid, stored_local, \
-                 stored_remote, created_at, updated_at) \
+                 thread_id, message_id_header, imap_uid, remote_id, \
+                 stored_local, stored_remote, created_at, updated_at) \
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, \
-                 ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21)",
+                 ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, \
+                 ?21, ?22)",
             )
             .bind(&id)
             .bind(&folder_id)
@@ -164,6 +166,7 @@ impl MessageRepo {
             .bind(message.thread_id.as_deref())
             .bind(message.message_id_header.as_deref())
             .bind(imap_uid)
+            .bind(message.remote_id.as_deref())
             .bind(message.is_stored_local)
             .bind(message.is_stored_remote)
             .bind(&created_at)
@@ -196,6 +199,29 @@ impl MessageRepo {
         .bind(uid as i64)
         .fetch_optional(pool)
         .await?;
+
+        match row {
+            Some(row) => Ok(Some(message_from_row(&row)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Look up a message by its provider-specific remote identifier.
+    ///
+    /// Used for M365 Graph accounts where the remote ID is an opaque string.
+    /// Returns `None` if no message with that remote ID exists for the account.
+    pub async fn get_by_remote_id(
+        pool: &SqlitePool,
+        account_id: &AccountId,
+        remote_id: &str,
+    ) -> Result<Option<Message>> {
+        let account_id_str = account_id.0.to_string();
+
+        let row = sqlx::query("SELECT * FROM messages WHERE account_id = ?1 AND remote_id = ?2")
+            .bind(&account_id_str)
+            .bind(remote_id)
+            .fetch_optional(pool)
+            .await?;
 
         match row {
             Some(row) => Ok(Some(message_from_row(&row)?)),
@@ -273,6 +299,7 @@ fn message_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<Message> {
         account_id: AccountId(account_id),
         folder_id: FolderId(folder_id),
         uid: imap_uid.map(|v| v as u32),
+        remote_id: row.get("remote_id"),
         message_id_header: row.get("message_id_header"),
         thread_id: row.get("thread_id"),
         subject: Some(subject),
