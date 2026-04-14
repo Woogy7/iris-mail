@@ -29,6 +29,15 @@ pub async fn sync_folders(
         .await
         .map_err(|e| e.to_string())?;
 
+    sync_folders_inner(&pool, &config, &account).await
+}
+
+/// Inner folder sync logic, reusable without Tauri State wrappers.
+pub(crate) async fn sync_folders_inner(
+    pool: &sqlx::SqlitePool,
+    config: &crate::setup::AppConfig,
+    account: &iris_core::Account,
+) -> Result<Vec<iris_core::Folder>, String> {
     tracing::info!(
         "Syncing folders for {} ({})",
         account.display_name,
@@ -37,7 +46,7 @@ pub async fn sync_folders(
 
     let discovered = match account.provider {
         iris_core::Provider::M365 => {
-            let token = load_m365_access_token(&account, &config).await?;
+            let token = load_m365_access_token(account, config).await?;
             let client = iris_mail::GraphClient::new(token);
             iris_mail::list_graph_folders(&client).await.map_err(|e| {
                 tracing::error!("Graph folder sync failed: {e}");
@@ -45,7 +54,7 @@ pub async fn sync_folders(
             })?
         }
         iris_core::Provider::ImapGeneric => {
-            let mut imap_client = connect_imap_for_account(&account, &config, &pool).await?;
+            let mut imap_client = connect_imap_for_account(account, config, pool).await?;
             let result = iris_mail::discover_folders(&mut imap_client)
                 .await
                 .map_err(|e| e.to_string())?;
@@ -61,7 +70,7 @@ pub async fn sync_folders(
     for d in &discovered {
         // Look up existing folder by (account_id, full_path) to preserve its ID.
         let existing = iris_db::repo::FolderRepo::get_by_account_and_full_path(
-            &pool,
+            pool,
             &account.id,
             &d.full_path,
         )
@@ -86,14 +95,14 @@ pub async fn sync_folders(
             created_at: existing.as_ref().map_or(now, |f| f.created_at),
             updated_at: now,
         };
-        iris_db::repo::FolderRepo::upsert(&pool, &folder)
+        iris_db::repo::FolderRepo::upsert(pool, &folder)
             .await
             .map_err(|e| e.to_string())?;
     }
 
     tracing::info!("Synced {} folders", discovered.len());
 
-    iris_db::repo::FolderRepo::list_by_account(&pool, &id)
+    iris_db::repo::FolderRepo::list_by_account(pool, &account.id)
         .await
         .map_err(|e| e.to_string())
 }

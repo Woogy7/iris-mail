@@ -1,7 +1,7 @@
 <script lang="ts">
   import { addM365Account, addImapAccount } from '$lib/api/accounts';
   import { loadAccounts } from '$lib/stores/accounts.svelte';
-  import { selectAccount, triggerFolderSync } from '$lib/stores/mail.svelte';
+  import { selectAccount, selectFolder, triggerAccountSync, getFolders } from '$lib/stores/mail.svelte';
 
   let { isOpen, onClose }: {
     isOpen: boolean;
@@ -50,7 +50,12 @@
       await loadAccounts();
       handleClose();
       await selectAccount(account.id);
-      await triggerFolderSync(account.id);
+      await triggerAccountSync(account.id);
+      // Auto-select Inbox and fetch its messages.
+      const inbox = getFolders().find(f => f.special === 'Inbox');
+      if (inbox) {
+        await selectFolder(inbox.id);
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -71,7 +76,11 @@
       await loadAccounts();
       handleClose();
       await selectAccount(account.id);
-      await triggerFolderSync(account.id);
+      await triggerAccountSync(account.id);
+      const inbox = getFolders().find(f => f.special === 'Inbox');
+      if (inbox) {
+        await selectFolder(inbox.id);
+      }
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {

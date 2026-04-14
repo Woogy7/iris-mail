@@ -29,6 +29,8 @@ fn main() {
             commands::messages::list_messages,
             commands::messages::fetch_folder_messages,
             commands::messages::get_message_body,
+            commands::sync::sync_account,
+            commands::sync::sync_all_accounts,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Iris Mail");

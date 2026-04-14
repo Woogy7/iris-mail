@@ -53,3 +53,11 @@ export async function fetchFolderMessages(
 export async function getMessageBody(messageId: string): Promise<MessageBody> {
   return invoke<MessageBody>('get_message_body', { messageId });
 }
+
+export async function syncAccount(accountId: string): Promise<void> {
+  return invoke<void>('sync_account', { accountId });
+}
+
+export async function syncAllAccounts(): Promise<void> {
+  return invoke<void>('sync_all_accounts');
+}
