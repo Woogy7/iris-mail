@@ -100,6 +100,62 @@ impl AccountRepo {
         Ok(())
     }
 
+    /// Store the server configuration for an account.
+    ///
+    /// Persists IMAP/SMTP host, port, and TLS settings so they do not need to
+    /// be re-discovered on every connection.
+    pub async fn set_server_config(
+        pool: &SqlitePool,
+        account_id: &AccountId,
+        config: &iris_core::ServerConfig,
+    ) -> Result<()> {
+        let id_str = account_id.0.to_string();
+        let json = serde_json::to_string(config)?;
+
+        let result = sqlx::query("UPDATE accounts SET server_config = ?1 WHERE id = ?2")
+            .bind(&json)
+            .bind(&id_str)
+            .execute(pool)
+            .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(Error::NotFound {
+                entity: "account",
+                id: id_str,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Retrieve the server configuration for an account.
+    ///
+    /// Returns `None` if the server config has not been set (i.e. the stored
+    /// value is the default empty JSON object or the account does not exist).
+    pub async fn get_server_config(
+        pool: &SqlitePool,
+        account_id: &AccountId,
+    ) -> Result<Option<iris_core::ServerConfig>> {
+        let id_str = account_id.0.to_string();
+
+        let row = sqlx::query("SELECT server_config FROM accounts WHERE id = ?1")
+            .bind(&id_str)
+            .fetch_optional(pool)
+            .await?;
+
+        match row {
+            Some(row) => {
+                let json: String = row.get("server_config");
+                if json == "{}" || json.is_empty() {
+                    return Ok(None);
+                }
+                let config: iris_core::ServerConfig = serde_json::from_str(&json)?;
+                Ok(Some(config))
+            }
+            None => Ok(None),
+        }
+    }
+
     /// Deletes an account by its identifier.
     pub async fn delete(pool: &SqlitePool, id: &AccountId) -> Result<()> {
         let id_str = id.0.to_string();

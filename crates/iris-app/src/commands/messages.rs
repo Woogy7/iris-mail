@@ -39,7 +39,7 @@ pub async fn fetch_folder_messages(
         .map_err(|e| e.to_string())?;
 
     let mut imap_client =
-        crate::commands::folders::connect_imap_for_account(&account, &config).await?;
+        crate::commands::folders::connect_imap_for_account(&account, &config, &pool).await?;
 
     imap_client
         .select(&folder.full_path)
@@ -134,7 +134,7 @@ pub async fn get_message_body(
         .ok_or("message has no IMAP UID — cannot fetch body")?;
 
     let mut imap_client =
-        crate::commands::folders::connect_imap_for_account(&account, &config).await?;
+        crate::commands::folders::connect_imap_for_account(&account, &config, &pool).await?;
 
     imap_client
         .select(&folder.full_path)

@@ -74,6 +74,12 @@ pub async fn add_m365_account(
         .await
         .map_err(|e| e.to_string())?;
 
+    // Discover and persist server configuration so we don't re-discover on every connect.
+    if let Ok(server_config) = iris_mail::discover_servers(&account.email_address).await {
+        let _ =
+            iris_db::repo::AccountRepo::set_server_config(&pool, &account.id, &server_config).await;
+    }
+
     Ok(account)
 }
 
@@ -116,6 +122,12 @@ pub async fn add_imap_account(
     iris_db::repo::AccountRepo::insert(&pool, &account)
         .await
         .map_err(|e| e.to_string())?;
+
+    // Best-effort server discovery and persistence for generic IMAP accounts.
+    if let Ok(server_config) = iris_mail::discover_servers(&account.email_address).await {
+        let _ =
+            iris_db::repo::AccountRepo::set_server_config(&pool, &account.id, &server_config).await;
+    }
 
     Ok(account)
 }

@@ -49,10 +49,12 @@ impl FolderRepo {
         Ok(())
     }
 
-    /// Insert a folder if it does not exist, or replace it if it does.
+    /// Insert a folder if it does not exist, or update it if it does.
     ///
-    /// Matches by the folder's primary key (id). All columns are overwritten
-    /// on conflict, which makes this suitable for syncing remote folder lists.
+    /// Matches by the unique `(account_id, full_path)` index to maintain stable
+    /// folder IDs across syncs. On conflict the existing row is updated in place,
+    /// which avoids the cascade-delete of child messages that `INSERT OR REPLACE`
+    /// would trigger.
     pub async fn upsert(pool: &SqlitePool, folder: &Folder) -> Result<()> {
         let id = folder.id.0.to_string();
         let account_id = folder.account_id.0.to_string();
@@ -67,12 +69,21 @@ impl FolderRepo {
         let updated_at = folder.updated_at.to_rfc3339();
 
         sqlx::query(
-            "INSERT OR REPLACE INTO folders \
+            "INSERT INTO folders \
              (id, account_id, name, full_path, parent_id, special, \
              uid_validity, last_seen_uid, last_synced_at, message_count, \
              unread_count, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, \
-             ?12, ?13)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) \
+             ON CONFLICT (account_id, full_path) DO UPDATE SET \
+             name = excluded.name, \
+             parent_id = excluded.parent_id, \
+             special = excluded.special, \
+             uid_validity = excluded.uid_validity, \
+             last_seen_uid = excluded.last_seen_uid, \
+             last_synced_at = excluded.last_synced_at, \
+             message_count = excluded.message_count, \
+             unread_count = excluded.unread_count, \
+             updated_at = excluded.updated_at",
         )
         .bind(&id)
         .bind(&account_id)
@@ -107,6 +118,25 @@ impl FolderRepo {
             })?;
 
         folder_from_row(&row)
+    }
+
+    /// Retrieves a folder by its account and full IMAP path.
+    ///
+    /// Returns `None` if no folder with the given path exists for the account.
+    pub async fn get_by_account_and_full_path(
+        pool: &SqlitePool,
+        account_id: &AccountId,
+        full_path: &str,
+    ) -> Result<Option<Folder>> {
+        let account_id_str = account_id.0.to_string();
+
+        let row = sqlx::query("SELECT * FROM folders WHERE account_id = ?1 AND full_path = ?2")
+            .bind(&account_id_str)
+            .bind(full_path)
+            .fetch_optional(pool)
+            .await?;
+
+        row.map(|r| folder_from_row(&r)).transpose()
     }
 
     /// Lists all folders for an account, ordered by special folder priority then name.

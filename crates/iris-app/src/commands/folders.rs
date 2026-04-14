@@ -29,7 +29,7 @@ pub async fn sync_folders(
         .await
         .map_err(|e| e.to_string())?;
 
-    let mut imap_client = connect_imap_for_account(&account, &config)
+    let mut imap_client = connect_imap_for_account(&account, &config, &pool)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -39,19 +39,31 @@ pub async fn sync_folders(
 
     let now = Utc::now();
     for d in &discovered {
+        // Look up existing folder by (account_id, full_path) to preserve its ID.
+        let existing = iris_db::repo::FolderRepo::get_by_account_and_full_path(
+            &pool,
+            &account.id,
+            &d.full_path,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
         let folder = iris_core::Folder {
-            id: iris_core::FolderId::new(),
+            id: existing
+                .as_ref()
+                .map(|f| f.id)
+                .unwrap_or_else(iris_core::FolderId::new),
             account_id: account.id,
             parent_id: None,
             name: d.name.clone(),
             full_path: d.full_path.clone(),
             special: d.special,
-            uid_validity: None,
-            last_seen_uid: None,
-            message_count: 0,
-            unread_count: 0,
-            last_synced_at: None,
-            created_at: now,
+            uid_validity: existing.as_ref().and_then(|f| f.uid_validity),
+            last_seen_uid: existing.as_ref().and_then(|f| f.last_seen_uid),
+            message_count: existing.as_ref().map_or(0, |f| f.message_count),
+            unread_count: existing.as_ref().map_or(0, |f| f.unread_count),
+            last_synced_at: existing.as_ref().and_then(|f| f.last_synced_at),
+            created_at: existing.as_ref().map_or(now, |f| f.created_at),
             updated_at: now,
         };
         iris_db::repo::FolderRepo::upsert(&pool, &folder)
@@ -68,15 +80,30 @@ pub async fn sync_folders(
 
 /// Connects to the IMAP server for the given account.
 ///
-/// Loads credentials from the OS keychain and uses auto-discovery to find
-/// server settings. For M365, refreshes the OAuth token if it has expired.
+/// First tries to load server settings from the database. Falls back to
+/// auto-discovery if none are persisted, then stores the discovered config
+/// for next time. Loads credentials from the OS keychain and refreshes
+/// OAuth tokens when needed.
 pub(crate) async fn connect_imap_for_account(
     account: &iris_core::Account,
     config: &crate::setup::AppConfig,
+    pool: &sqlx::SqlitePool,
 ) -> Result<iris_mail::ImapClient, String> {
-    let server_config = iris_mail::discover_servers(&account.email_address)
+    let server_config = match iris_db::repo::AccountRepo::get_server_config(pool, &account.id)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| e.to_string())?
+    {
+        Some(cached) => cached,
+        None => {
+            let discovered = iris_mail::discover_servers(&account.email_address)
+                .await
+                .map_err(|e| e.to_string())?;
+            iris_db::repo::AccountRepo::set_server_config(pool, &account.id, &discovered)
+                .await
+                .map_err(|e| e.to_string())?;
+            discovered
+        }
+    };
 
     match account.provider {
         iris_core::Provider::M365 => connect_m365(account, config, &server_config.imap).await,

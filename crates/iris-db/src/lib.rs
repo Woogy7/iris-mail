@@ -1345,4 +1345,197 @@ mod tests {
             .expect("list folders");
         assert_eq!(all.len(), 1);
     }
+
+    // --- ServerConfig tests ---
+
+    #[tokio::test]
+    async fn server_config_set_and_get_round_trip() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let config = iris_core::ServerConfig {
+            imap: iris_core::ImapServer {
+                host: "imap.example.com".to_owned(),
+                port: 993,
+                use_tls: true,
+            },
+            smtp: iris_core::SmtpServer {
+                host: "smtp.example.com".to_owned(),
+                port: 587,
+                use_tls: true,
+            },
+        };
+
+        AccountRepo::set_server_config(&pool, &account.id, &config)
+            .await
+            .expect("set server config");
+
+        let fetched = AccountRepo::get_server_config(&pool, &account.id)
+            .await
+            .expect("get server config");
+
+        assert!(fetched.is_some(), "server config should be present");
+        let fetched = fetched.unwrap();
+        assert_eq!(fetched.imap.host, "imap.example.com");
+        assert_eq!(fetched.imap.port, 993);
+        assert!(fetched.imap.use_tls);
+        assert_eq!(fetched.smtp.host, "smtp.example.com");
+        assert_eq!(fetched.smtp.port, 587);
+        assert!(fetched.smtp.use_tls);
+    }
+
+    #[tokio::test]
+    async fn server_config_returns_none_when_not_set() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let config = AccountRepo::get_server_config(&pool, &account.id)
+            .await
+            .expect("get server config");
+
+        assert!(config.is_none(), "default empty config should return None");
+    }
+
+    #[tokio::test]
+    async fn server_config_set_returns_not_found_for_missing_account() {
+        let pool = test_pool().await;
+        let fake_id = AccountId::new();
+        let config = iris_core::ServerConfig {
+            imap: iris_core::ImapServer {
+                host: "imap.example.com".to_owned(),
+                port: 993,
+                use_tls: true,
+            },
+            smtp: iris_core::SmtpServer {
+                host: "smtp.example.com".to_owned(),
+                port: 587,
+                use_tls: true,
+            },
+        };
+
+        let result = AccountRepo::set_server_config(&pool, &fake_id, &config).await;
+        assert!(matches!(
+            result,
+            Err(Error::NotFound {
+                entity: "account",
+                ..
+            })
+        ));
+    }
+
+    // --- Stable folder ID tests ---
+
+    #[tokio::test]
+    async fn folder_upsert_preserves_id_when_matching_by_full_path() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        // Upsert with a *different* ID but the same (account_id, full_path).
+        let mut new_version = folder.clone();
+        new_version.id = FolderId::new(); // different ID
+        new_version.name = "Renamed Inbox".to_owned();
+        new_version.message_count = 99;
+        FolderRepo::upsert(&pool, &new_version)
+            .await
+            .expect("upsert with new id but same full_path");
+
+        // The original ID should be preserved (ON CONFLICT keeps the existing row).
+        let fetched = FolderRepo::get_by_id(&pool, &folder.id)
+            .await
+            .expect("get folder by original id");
+        assert_eq!(fetched.id, folder.id);
+        assert_eq!(fetched.name, "Renamed Inbox");
+        assert_eq!(fetched.message_count, 99);
+
+        // Only one folder should exist.
+        let all = FolderRepo::list_by_account(&pool, &account.id)
+            .await
+            .expect("list folders");
+        assert_eq!(all.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn folder_upsert_does_not_delete_messages() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        // Upsert the folder with updated metadata.
+        let mut updated = folder.clone();
+        updated.message_count = 42;
+        updated.name = "Updated Inbox".to_owned();
+        FolderRepo::upsert(&pool, &updated)
+            .await
+            .expect("upsert folder");
+
+        // The message must still exist.
+        let fetched_msg = MessageRepo::get_by_id(&pool, &message.id)
+            .await
+            .expect("message should survive folder upsert");
+        assert_eq!(fetched_msg.id, message.id);
+        assert_eq!(fetched_msg.subject, Some("Hello World".to_owned()));
+    }
+
+    #[tokio::test]
+    async fn folder_get_by_account_and_full_path_returns_match() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let found = FolderRepo::get_by_account_and_full_path(&pool, &account.id, &folder.full_path)
+            .await
+            .expect("query should succeed");
+
+        assert!(found.is_some(), "should find folder by full_path");
+        assert_eq!(found.unwrap().id, folder.id);
+    }
+
+    #[tokio::test]
+    async fn folder_get_by_account_and_full_path_returns_none_for_nonexistent() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let found =
+            FolderRepo::get_by_account_and_full_path(&pool, &account.id, "NONEXISTENT/PATH")
+                .await
+                .expect("query should succeed");
+
+        assert!(found.is_none(), "should return None for missing folder");
+    }
 }
