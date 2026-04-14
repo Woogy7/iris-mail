@@ -4,11 +4,14 @@
 //! `oauth2`) and exposes a clean async API that returns domain types from
 //! `iris-core`. It knows nothing about SQLite or the local database.
 
+pub mod discovery;
 pub mod imap;
 pub mod oauth;
-mod smtp;
+pub mod smtp;
 
+pub use discovery::discover_servers;
 pub use oauth::{OauthTokens, keychain::KeychainStore};
+pub use smtp::validate_smtp_connection;
 
 /// Errors that can occur in the mail protocol layer.
 #[derive(Debug, thiserror::Error)]
