@@ -1,15 +1,23 @@
-//! Iris Mail — IMAP, SMTP, and OAuth protocol layer.
+//! Iris Mail — IMAP, SMTP, Graph, and OAuth protocol layer.
 //!
 //! This crate wraps the mail protocol libraries (`async-imap`, `lettre`,
-//! `oauth2`) and exposes a clean async API that returns domain types from
+//! `reqwest`) and exposes a clean async API that returns domain types from
 //! `iris-core`. It knows nothing about SQLite or the local database.
+//!
+//! M365 accounts use the Microsoft Graph REST API instead of IMAP. The
+//! [`graph`] module provides folder listing, message fetching, and body
+//! retrieval via HTTP/JSON.
 
 pub mod discovery;
+pub mod graph;
 pub mod imap;
 pub mod oauth;
 pub mod smtp;
 
 pub use discovery::discover_servers;
+pub use graph::client::GraphClient;
+pub use graph::folders::list_graph_folders;
+pub use graph::messages::{fetch_graph_message_body, fetch_graph_messages};
 pub use imap::client::{ImapAuth, ImapClient};
 pub use imap::fetch::{FetchedBody, FetchedMessage, fetch_message_body, fetch_message_headers};
 pub use imap::folders::{DiscoveredFolder, discover_folders};
@@ -34,6 +42,10 @@ pub enum Error {
     /// An error from the OS keychain.
     #[error("keychain error: {0}")]
     Keychain(String),
+
+    /// A Microsoft Graph API error.
+    #[error("Graph API error: {0}")]
+    Graph(String),
 
     /// An IMAP protocol error.
     #[error("IMAP error: {0}")]

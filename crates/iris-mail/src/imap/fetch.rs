@@ -10,13 +10,19 @@ use mail_parser::{Address, MimeHeaders};
 
 use crate::imap::client::ImapClient;
 
-/// A message's headers and metadata fetched from the IMAP server.
+/// A message's headers and metadata fetched from a mail server.
 ///
 /// Protocol-level type. The caller converts this into an `iris_core::Message`.
+/// Used by both IMAP and Graph API code paths.
 #[derive(Debug, Clone)]
 pub struct FetchedMessage {
-    /// IMAP UID.
+    /// IMAP UID (0 for Graph API messages where UIDs don't apply).
     pub uid: u32,
+    /// Provider-specific remote identifier.
+    ///
+    /// For M365 Graph messages this is the opaque Graph message ID.
+    /// For IMAP messages this is `None` — the `uid` field is the identifier.
+    pub remote_id: Option<String>,
     /// RFC 2822 Message-ID header.
     pub message_id: Option<String>,
     /// Subject line.
@@ -36,7 +42,7 @@ pub struct FetchedMessage {
     /// Parsed flags.
     pub flags: MessageFlags,
     /// Whether the message likely has attachments (heuristic based on
-    /// Content-Type "multipart/mixed").
+    /// Content-Type "multipart/mixed" for IMAP, `hasAttachments` for Graph).
     pub has_attachment: bool,
 }
 
@@ -102,6 +108,7 @@ pub async fn fetch_message_headers(
 
         messages.push(FetchedMessage {
             uid,
+            remote_id: None,
             message_id,
             subject,
             from_name,

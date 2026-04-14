@@ -40,9 +40,13 @@ pub async fn add_m365_account(
         .ok_or("M365 client ID not configured — set IRIS_M365_CLIENT_ID env var")?;
 
     // Run the browser-based OAuth flow.
-    let tokens = iris_mail::oauth::m365::start_m365_oauth(client_id, config.oauth_redirect_port)
-        .await
-        .map_err(|e| e.to_string())?;
+    let tokens = iris_mail::oauth::m365::start_m365_oauth(
+        client_id,
+        config.oauth_redirect_port,
+        &email_address,
+    )
+    .await
+    .map_err(|e| e.to_string())?;
 
     // Create the account with a fresh ID and keychain reference.
     let account_id = iris_core::AccountId::new();

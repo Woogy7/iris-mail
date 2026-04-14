@@ -16,10 +16,11 @@ const AUTH_URL: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/aut
 /// Microsoft identity platform v2.0 token endpoint.
 const TOKEN_URL: &str = "https://login.microsoftonline.com/common/oauth2/v2.0/token";
 
-/// Scopes required for IMAP and SMTP access via XOAUTH2.
+/// Scopes required for Microsoft Graph API access.
 const SCOPES: &[&str] = &[
-    "https://outlook.office365.com/IMAP.AccessAsUser.All",
-    "https://outlook.office365.com/SMTP.Send",
+    "https://graph.microsoft.com/Mail.Read",
+    "https://graph.microsoft.com/Mail.ReadWrite",
+    "https://graph.microsoft.com/Mail.Send",
     "offline_access",
 ];
 
@@ -43,17 +44,24 @@ struct TokenResponse {
 /// Starts the M365 OAuth2 PKCE flow.
 ///
 /// Opens the system browser to the Microsoft login page, waits for the redirect
-/// on `127.0.0.1:{redirect_port}`, exchanges the authorization code for tokens,
+/// on `localhost:{redirect_port}`, exchanges the authorization code for tokens,
 /// and returns the [`OauthTokens`].
-pub async fn start_m365_oauth(client_id: &str, redirect_port: u16) -> crate::Result<OauthTokens> {
-    let redirect_uri = format!("http://127.0.0.1:{redirect_port}");
+///
+/// The `email_hint` is passed as `login_hint` to Microsoft so the correct
+/// account is pre-selected in the consent dialog.
+pub async fn start_m365_oauth(
+    client_id: &str,
+    redirect_port: u16,
+    email_hint: &str,
+) -> crate::Result<OauthTokens> {
+    let redirect_uri = format!("http://localhost:{redirect_port}");
 
     // Generate PKCE verifier and challenge.
     let verifier = generate_pkce_verifier();
     let challenge = generate_pkce_challenge(&verifier);
 
     // Build the authorization URL.
-    let auth_url = build_auth_url(client_id, &redirect_uri, &challenge)?;
+    let auth_url = build_auth_url(client_id, &redirect_uri, &challenge, email_hint)?;
 
     // Bind the local listener *before* opening the browser so we never miss the redirect.
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{redirect_port}"))
@@ -123,8 +131,13 @@ fn generate_pkce_challenge(verifier: &str) -> String {
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
 }
 
-/// Constructs the full authorization URL with PKCE and scopes.
-fn build_auth_url(client_id: &str, redirect_uri: &str, challenge: &str) -> crate::Result<Url> {
+/// Constructs the full authorization URL with PKCE, scopes, and login hint.
+fn build_auth_url(
+    client_id: &str,
+    redirect_uri: &str,
+    challenge: &str,
+    email_hint: &str,
+) -> crate::Result<Url> {
     let scope = SCOPES.join(" ");
     Url::parse_with_params(
         AUTH_URL,
@@ -136,6 +149,8 @@ fn build_auth_url(client_id: &str, redirect_uri: &str, challenge: &str) -> crate
             ("scope", &scope),
             ("code_challenge", challenge),
             ("code_challenge_method", "S256"),
+            ("login_hint", email_hint),
+            ("prompt", "select_account"),
         ],
     )
     .map_err(|e| crate::Error::Oauth(format!("failed to build auth URL: {e}")))
@@ -216,12 +231,14 @@ async fn exchange_code(
     redirect_uri: &str,
     verifier: &str,
 ) -> crate::Result<OauthTokens> {
+    let scope = SCOPES.join(" ");
     let params = [
         ("client_id", client_id),
         ("grant_type", "authorization_code"),
         ("code", code),
         ("redirect_uri", redirect_uri),
         ("code_verifier", verifier),
+        ("scope", &scope),
     ];
 
     let client = reqwest::Client::new();
@@ -312,14 +329,21 @@ mod tests {
 
     #[test]
     fn build_auth_url_contains_all_required_params() {
-        let url = build_auth_url("test-client-id", "http://127.0.0.1:8080", "test-challenge")
-            .expect("should build URL");
+        let url = build_auth_url(
+            "test-client-id",
+            "http://localhost:8080",
+            "test-challenge",
+            "user@example.com",
+        )
+        .expect("should build URL");
         let url_str = url.as_str();
         assert!(url_str.contains("client_id=test-client-id"));
         assert!(url_str.contains("response_type=code"));
         assert!(url_str.contains("code_challenge=test-challenge"));
         assert!(url_str.contains("code_challenge_method=S256"));
-        assert!(url_str.contains("IMAP.AccessAsUser.All"));
+        assert!(url_str.contains("Mail.Read"));
+        assert!(url_str.contains("login_hint=user%40example.com"));
+        assert!(url_str.contains("prompt=select_account"));
     }
 
     #[test]
