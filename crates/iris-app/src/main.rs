@@ -20,8 +20,15 @@ fn main() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::accounts::list_accounts,
+            commands::accounts::get_account,
+            commands::accounts::add_m365_account,
+            commands::accounts::add_imap_account,
+            commands::accounts::remove_account,
             commands::folders::list_folders,
+            commands::folders::sync_folders,
             commands::messages::list_messages,
+            commands::messages::fetch_folder_messages,
+            commands::messages::get_message_body,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Iris Mail");

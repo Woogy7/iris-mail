@@ -2110,8 +2110,10 @@ name = "iris-app"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "iris-core",
  "iris-db",
+ "iris-mail",
  "serde",
  "serde_json",
  "sqlx",
