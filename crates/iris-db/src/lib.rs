@@ -1538,4 +1538,408 @@ mod tests {
 
         assert!(found.is_none(), "should return None for missing folder");
     }
+
+    // --- MessageBodyRepo sanitisation edge cases ---
+
+    #[tokio::test]
+    async fn message_body_sanitises_onerror_attributes() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        let body = MessageBody {
+            message_id: message.id,
+            html: Some(r#"<img src="x" onerror="alert('xss')"><p>Content</p>"#.to_owned()),
+            sanitised_html: None,
+            plain_text: None,
+        };
+
+        MessageBodyRepo::upsert(&pool, &body)
+            .await
+            .expect("upsert body");
+
+        let fetched = MessageBodyRepo::get_by_message_id(&pool, &message.id)
+            .await
+            .expect("get body")
+            .expect("body should exist");
+
+        let sanitised = fetched.sanitised_html.expect("sanitised should exist");
+        assert!(
+            !sanitised.contains("onerror"),
+            "onerror attribute should be stripped: {sanitised}"
+        );
+        assert!(
+            sanitised.contains("Content"),
+            "safe content should remain: {sanitised}"
+        );
+    }
+
+    #[tokio::test]
+    async fn message_body_sanitises_iframe_tags() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        let body = MessageBody {
+            message_id: message.id,
+            html: Some(
+                r#"<iframe src="https://evil.com/phish"></iframe><p>Real content</p>"#.to_owned(),
+            ),
+            sanitised_html: None,
+            plain_text: None,
+        };
+
+        MessageBodyRepo::upsert(&pool, &body)
+            .await
+            .expect("upsert body");
+
+        let fetched = MessageBodyRepo::get_by_message_id(&pool, &message.id)
+            .await
+            .expect("get body")
+            .expect("body should exist");
+
+        let sanitised = fetched.sanitised_html.expect("sanitised should exist");
+        assert!(
+            !sanitised.contains("iframe"),
+            "iframe tags should be stripped: {sanitised}"
+        );
+        assert!(
+            sanitised.contains("Real content"),
+            "safe content should remain: {sanitised}"
+        );
+    }
+
+    #[tokio::test]
+    async fn message_body_derives_plain_text_from_html() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        let body = MessageBody {
+            message_id: message.id,
+            html: Some("<h1>Title</h1><p>Paragraph text here.</p>".to_owned()),
+            sanitised_html: None,
+            plain_text: None,
+        };
+
+        MessageBodyRepo::upsert(&pool, &body)
+            .await
+            .expect("upsert body");
+
+        let fetched = MessageBodyRepo::get_by_message_id(&pool, &message.id)
+            .await
+            .expect("get body")
+            .expect("body should exist");
+
+        let plain = fetched.plain_text.expect("plain text should be derived");
+        assert!(
+            plain.contains("Title"),
+            "plain text should contain heading text: {plain}"
+        );
+        assert!(
+            plain.contains("Paragraph text here"),
+            "plain text should contain paragraph text: {plain}"
+        );
+        assert!(
+            !plain.contains("<h1>"),
+            "plain text should not contain HTML tags: {plain}"
+        );
+    }
+
+    #[tokio::test]
+    async fn message_body_preserves_provided_sanitised_html() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        let body = MessageBody {
+            message_id: message.id,
+            html: Some("<p>Original</p>".to_owned()),
+            sanitised_html: Some("<p>Pre-sanitised</p>".to_owned()),
+            plain_text: Some("Pre-derived".to_owned()),
+        };
+
+        MessageBodyRepo::upsert(&pool, &body)
+            .await
+            .expect("upsert body");
+
+        let fetched = MessageBodyRepo::get_by_message_id(&pool, &message.id)
+            .await
+            .expect("get body")
+            .expect("body should exist");
+
+        assert_eq!(
+            fetched.sanitised_html.as_deref(),
+            Some("<p>Pre-sanitised</p>"),
+            "should use provided sanitised_html instead of re-sanitising"
+        );
+        assert_eq!(
+            fetched.plain_text.as_deref(),
+            Some("Pre-derived"),
+            "should use provided plain_text instead of re-deriving"
+        );
+    }
+
+    #[tokio::test]
+    async fn message_body_upsert_replaces_existing_body() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        let body1 = MessageBody {
+            message_id: message.id,
+            html: Some("<p>First</p>".to_owned()),
+            sanitised_html: None,
+            plain_text: None,
+        };
+        MessageBodyRepo::upsert(&pool, &body1)
+            .await
+            .expect("upsert first body");
+
+        let body2 = MessageBody {
+            message_id: message.id,
+            html: Some("<p>Second</p>".to_owned()),
+            sanitised_html: None,
+            plain_text: None,
+        };
+        MessageBodyRepo::upsert(&pool, &body2)
+            .await
+            .expect("upsert second body");
+
+        let fetched = MessageBodyRepo::get_by_message_id(&pool, &message.id)
+            .await
+            .expect("get body")
+            .expect("body should exist");
+
+        assert_eq!(fetched.html, Some("<p>Second</p>".to_owned()));
+    }
+
+    // --- Message count with all read ---
+
+    #[tokio::test]
+    async fn count_by_folder_returns_zero_unread_when_all_read() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        for i in 0..3 {
+            let mut msg = make_message(account.id, folder.id);
+            msg.id = MessageId::new();
+            msg.uid = Some(300 + i);
+            msg.message_id_header = Some(format!("<allread{i}@example.com>"));
+            msg.flags.is_read = true;
+            MessageRepo::insert(&pool, &msg)
+                .await
+                .expect("insert message");
+        }
+
+        let (total, unread) = MessageRepo::count_by_folder(&pool, &folder.id)
+            .await
+            .expect("count by folder");
+
+        assert_eq!(total, 3);
+        assert_eq!(unread, 0, "all messages are read so unread should be 0");
+    }
+
+    // --- Server config with non-TLS settings ---
+
+    #[tokio::test]
+    async fn server_config_preserves_non_tls_settings() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let config = iris_core::ServerConfig {
+            imap: iris_core::ImapServer {
+                host: "localhost".to_owned(),
+                port: 143,
+                use_tls: false,
+            },
+            smtp: iris_core::SmtpServer {
+                host: "localhost".to_owned(),
+                port: 25,
+                use_tls: false,
+            },
+        };
+
+        AccountRepo::set_server_config(&pool, &account.id, &config)
+            .await
+            .expect("set server config");
+
+        let fetched = AccountRepo::get_server_config(&pool, &account.id)
+            .await
+            .expect("get server config")
+            .expect("config should be present");
+
+        assert!(!fetched.imap.use_tls, "IMAP TLS should be false");
+        assert!(!fetched.smtp.use_tls, "SMTP TLS should be false");
+        assert_eq!(fetched.imap.port, 143);
+        assert_eq!(fetched.smtp.port, 25);
+    }
+
+    // --- FTS5 with message body via MessageBodyRepo ---
+
+    #[tokio::test]
+    async fn fts5_indexes_body_text_inserted_via_message_body_repo() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        let body = MessageBody {
+            message_id: message.id,
+            html: Some("<p>Rhinoceros</p>".to_owned()),
+            sanitised_html: None,
+            plain_text: None,
+        };
+        MessageBodyRepo::upsert(&pool, &body)
+            .await
+            .expect("upsert body");
+
+        // The body trigger should have indexed the derived plain text.
+        let fts_count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'Rhinoceros'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("fts query");
+
+        assert_eq!(fts_count.0, 1, "expected 1 FTS match for body text");
+    }
+
+    // --- Message body with only plain text (no HTML) ---
+
+    #[tokio::test]
+    async fn message_body_with_only_plain_text_round_trips() {
+        let pool = test_pool().await;
+        let account = make_account();
+        AccountRepo::insert(&pool, &account)
+            .await
+            .expect("insert account");
+
+        let folder = make_folder(account.id);
+        FolderRepo::insert(&pool, &folder)
+            .await
+            .expect("insert folder");
+
+        let message = make_message(account.id, folder.id);
+        MessageRepo::insert(&pool, &message)
+            .await
+            .expect("insert message");
+
+        let body = MessageBody {
+            message_id: message.id,
+            html: None,
+            sanitised_html: None,
+            plain_text: Some("Just plain text, no HTML.".to_owned()),
+        };
+        MessageBodyRepo::upsert(&pool, &body)
+            .await
+            .expect("upsert body");
+
+        let fetched = MessageBodyRepo::get_by_message_id(&pool, &message.id)
+            .await
+            .expect("get body")
+            .expect("body should exist");
+
+        assert!(fetched.html.is_none());
+        assert!(fetched.sanitised_html.is_none());
+        assert_eq!(
+            fetched.plain_text.as_deref(),
+            Some("Just plain text, no HTML.")
+        );
+    }
+
+    // --- Batch insert with zero messages ---
+
+    #[tokio::test]
+    async fn message_batch_insert_with_empty_slice_returns_zero() {
+        let pool = test_pool().await;
+
+        let inserted = MessageRepo::insert_batch(&pool, &[])
+            .await
+            .expect("batch insert empty");
+
+        assert_eq!(inserted, 0);
+    }
 }

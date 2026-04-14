@@ -265,3 +265,108 @@ fn token_response_to_tokens(resp: TokenResponse, fallback_refresh: &str) -> Oaut
         expires_at,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pkce_verifier_has_correct_length() {
+        let verifier = generate_pkce_verifier();
+        // 32 bytes base64url-encoded (no padding) = 43 chars.
+        assert_eq!(verifier.len(), 43);
+    }
+
+    #[test]
+    fn pkce_verifier_is_url_safe_base64() {
+        let verifier = generate_pkce_verifier();
+        // URL-safe base64 only uses [A-Za-z0-9_-].
+        assert!(
+            verifier
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+            "verifier contains non-url-safe chars: {verifier}"
+        );
+    }
+
+    #[test]
+    fn pkce_verifier_generates_unique_values() {
+        let a = generate_pkce_verifier();
+        let b = generate_pkce_verifier();
+        assert_ne!(a, b, "two verifiers should differ");
+    }
+
+    #[test]
+    fn pkce_challenge_is_sha256_of_verifier() {
+        // Use a known verifier to produce a deterministic challenge.
+        let verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let challenge = generate_pkce_challenge(verifier);
+        // The expected challenge is the base64url-encoded SHA-256 of the verifier.
+        let expected = {
+            use sha2::Digest;
+            let digest = sha2::Sha256::digest(verifier.as_bytes());
+            base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(digest)
+        };
+        assert_eq!(challenge, expected);
+    }
+
+    #[test]
+    fn build_auth_url_contains_all_required_params() {
+        let url = build_auth_url("test-client-id", "http://127.0.0.1:8080", "test-challenge")
+            .expect("should build URL");
+        let url_str = url.as_str();
+        assert!(url_str.contains("client_id=test-client-id"));
+        assert!(url_str.contains("response_type=code"));
+        assert!(url_str.contains("code_challenge=test-challenge"));
+        assert!(url_str.contains("code_challenge_method=S256"));
+        assert!(url_str.contains("IMAP.AccessAsUser.All"));
+    }
+
+    #[test]
+    fn token_response_to_tokens_uses_response_refresh_token() {
+        let resp = TokenResponse {
+            access_token: "access_1".to_string(),
+            refresh_token: Some("refresh_1".to_string()),
+            expires_in: Some(3600),
+        };
+
+        let tokens = token_response_to_tokens(resp, "fallback");
+        assert_eq!(tokens.access_token, "access_1");
+        assert_eq!(tokens.refresh_token, "refresh_1");
+        assert!(tokens.expires_at.is_some());
+    }
+
+    #[test]
+    fn token_response_to_tokens_uses_fallback_when_no_refresh_token() {
+        let resp = TokenResponse {
+            access_token: "access_2".to_string(),
+            refresh_token: None,
+            expires_in: None,
+        };
+
+        let tokens = token_response_to_tokens(resp, "existing_refresh");
+        assert_eq!(tokens.refresh_token, "existing_refresh");
+        assert!(tokens.expires_at.is_none());
+    }
+
+    #[test]
+    fn token_response_to_tokens_computes_expiry_from_now() {
+        let before = chrono::Utc::now();
+        let resp = TokenResponse {
+            access_token: "a".to_string(),
+            refresh_token: Some("r".to_string()),
+            expires_in: Some(3600),
+        };
+        let tokens = token_response_to_tokens(resp, "");
+        let after = chrono::Utc::now();
+
+        let expires_at = tokens.expires_at.expect("should have expiry");
+        let earliest = before + chrono::TimeDelta::seconds(3600);
+        let latest = after + chrono::TimeDelta::seconds(3600);
+
+        assert!(
+            expires_at >= earliest && expires_at <= latest,
+            "expires_at should be approximately now + 3600s"
+        );
+    }
+}

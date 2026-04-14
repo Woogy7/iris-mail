@@ -240,4 +240,55 @@ mod tests {
     fn empty_attributes_is_not_noselect() {
         assert!(!is_noselect(&[]));
     }
+
+    #[test]
+    fn last_path_segment_returns_full_string_with_no_delimiter() {
+        assert_eq!(last_path_segment("INBOX"), "INBOX");
+    }
+
+    #[test]
+    fn last_path_segment_splits_on_slash() {
+        assert_eq!(last_path_segment("Work/Projects/Active"), "Active");
+    }
+
+    #[test]
+    fn last_path_segment_splits_on_dot() {
+        assert_eq!(last_path_segment("INBOX.subfolder"), "subfolder");
+    }
+
+    #[test]
+    fn last_path_segment_handles_both_slash_and_dot() {
+        assert_eq!(last_path_segment("[Gmail]/All.Mail"), "Mail");
+    }
+
+    #[test]
+    fn last_path_segment_handles_empty_string() {
+        assert_eq!(last_path_segment(""), "");
+    }
+
+    #[test]
+    fn inbox_detected_case_insensitively() {
+        assert_eq!(map_special_use("inbox", &[]), SpecialFolder::Inbox);
+        assert_eq!(map_special_use("Inbox", &[]), SpecialFolder::Inbox);
+        assert_eq!(map_special_use("INBOX", &[]), SpecialFolder::Inbox);
+    }
+
+    #[test]
+    fn archive_detected_from_name_heuristic() {
+        assert_eq!(map_special_use("Archive", &[]), SpecialFolder::Archive);
+    }
+
+    #[test]
+    fn draft_detected_from_name_heuristic() {
+        // "Draft" (singular, no 's') should also match the contains("draft") check.
+        assert_eq!(map_special_use("Draft", &[]), SpecialFolder::Drafts);
+    }
+
+    #[test]
+    fn multiple_attributes_first_match_wins() {
+        // If a folder has both \Sent and \Drafts (unusual but possible),
+        // the first match in the loop should win.
+        let special = map_special_use("Ambiguous", &[NameAttribute::Sent, NameAttribute::Drafts]);
+        assert_eq!(special, SpecialFolder::Sent);
+    }
 }

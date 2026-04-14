@@ -288,4 +288,93 @@ mod tests {
         let result = discover_servers("not-an-email").await;
         assert!(result.is_err());
     }
+
+    #[tokio::test]
+    async fn discover_servers_rejects_empty_string() {
+        let result = discover_servers("").await;
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            crate::Error::Discovery { reason, .. } => {
+                assert!(
+                    reason.contains("no @"),
+                    "error should mention missing @: {reason}"
+                );
+            }
+            other => panic!("expected Discovery error, got: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn discover_servers_rejects_only_at_sign() {
+        let result = discover_servers("@").await;
+        // Domain after @ is empty, which should fail (either well-known miss
+        // or DNS errors), but should not panic.
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn well_known_config_returns_m365_for_hotmail() {
+        let config = well_known_config("hotmail.com");
+        assert!(config.is_some());
+        assert_eq!(config.unwrap().imap.host, "outlook.office365.com");
+    }
+
+    #[test]
+    fn well_known_config_returns_m365_for_live() {
+        let config = well_known_config("live.com");
+        assert!(config.is_some());
+        assert_eq!(config.unwrap().smtp.host, "smtp.office365.com");
+    }
+
+    #[test]
+    fn well_known_config_returns_icloud_for_me_com() {
+        let config = well_known_config("me.com");
+        assert!(config.is_some());
+        assert_eq!(config.unwrap().imap.host, "imap.mail.me.com");
+    }
+
+    #[test]
+    fn well_known_config_returns_icloud_for_mac_com() {
+        let config = well_known_config("mac.com");
+        assert!(config.is_some());
+        assert_eq!(config.unwrap().smtp.host, "smtp.mail.me.com");
+    }
+
+    #[test]
+    fn well_known_config_returns_gmail_for_googlemail() {
+        let config = well_known_config("googlemail.com");
+        assert!(config.is_some());
+        assert_eq!(config.unwrap().imap.host, "imap.gmail.com");
+    }
+
+    #[test]
+    fn well_known_config_returns_yahoo_for_ymail() {
+        let config = well_known_config("ymail.com");
+        assert!(config.is_some());
+        assert_eq!(config.unwrap().imap.host, "imap.mail.yahoo.com");
+    }
+
+    #[test]
+    fn server_config_helper_sets_tls_on_both_servers() {
+        let config = server_config("imap.test.com", 993, "smtp.test.com", 587);
+        assert!(config.imap.use_tls);
+        assert!(config.smtp.use_tls);
+    }
+
+    #[test]
+    fn strip_trailing_dot_handles_empty_string() {
+        assert_eq!(strip_trailing_dot(""), "");
+    }
+
+    #[test]
+    fn strip_trailing_dot_handles_single_dot() {
+        assert_eq!(strip_trailing_dot("."), "");
+    }
+
+    #[tokio::test]
+    async fn discover_servers_finds_gmail_for_gmail_address() {
+        let config = discover_servers("user@gmail.com").await.unwrap();
+        assert_eq!(config.imap.host, "imap.gmail.com");
+        assert_eq!(config.smtp.host, "smtp.gmail.com");
+    }
 }

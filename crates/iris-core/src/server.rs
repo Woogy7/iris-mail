@@ -63,4 +63,69 @@ mod tests {
         let deserialized: ServerConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(config, deserialized);
     }
+
+    #[test]
+    fn server_config_with_non_tls_serializes_correctly() {
+        let config = ServerConfig {
+            imap: ImapServer {
+                host: "localhost".to_string(),
+                port: 143,
+                use_tls: false,
+            },
+            smtp: SmtpServer {
+                host: "localhost".to_string(),
+                port: 25,
+                use_tls: false,
+            },
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: ServerConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config, deserialized);
+        assert!(!deserialized.imap.use_tls);
+        assert!(!deserialized.smtp.use_tls);
+    }
+
+    #[test]
+    fn server_config_json_contains_expected_fields() {
+        let config = ServerConfig {
+            imap: ImapServer {
+                host: "imap.test.com".to_string(),
+                port: 993,
+                use_tls: true,
+            },
+            smtp: SmtpServer {
+                host: "smtp.test.com".to_string(),
+                port: 587,
+                use_tls: true,
+            },
+        };
+
+        let json = serde_json::to_string(&config).unwrap();
+        assert!(
+            json.contains("imap.test.com"),
+            "JSON should contain IMAP host"
+        );
+        assert!(
+            json.contains("smtp.test.com"),
+            "JSON should contain SMTP host"
+        );
+        assert!(json.contains("993"), "JSON should contain IMAP port");
+        assert!(json.contains("587"), "JSON should contain SMTP port");
+    }
+
+    #[test]
+    fn imap_server_equality_considers_all_fields() {
+        let a = ImapServer {
+            host: "imap.test.com".to_string(),
+            port: 993,
+            use_tls: true,
+        };
+        let b = ImapServer {
+            host: "imap.test.com".to_string(),
+            port: 143,
+            use_tls: false,
+        };
+        assert_ne!(a, b);
+    }
 }

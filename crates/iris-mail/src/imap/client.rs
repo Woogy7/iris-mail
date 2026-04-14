@@ -149,4 +149,39 @@ mod tests {
             "user=user@example.com\x01auth=Bearer ya29.vF9dft4qmTc2\x01\x01"
         );
     }
+
+    #[test]
+    fn xoauth2_with_special_characters_in_token() {
+        // OAuth tokens can contain dots, underscores, hyphens, and slashes.
+        let auth = Xoauth2Auth::new("alice@corp.example.com", "ya29.a0ARr_dash/sl-ash.more");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(auth.response.as_bytes())
+            .expect("response should be valid base64");
+        let sasl = String::from_utf8(decoded).expect("SASL string should be valid UTF-8");
+        assert!(sasl.starts_with("user=alice@corp.example.com\x01"));
+        assert!(sasl.contains("Bearer ya29.a0ARr_dash/sl-ash.more"));
+        assert!(sasl.ends_with("\x01\x01"));
+    }
+
+    #[test]
+    fn xoauth2_with_empty_token_still_produces_valid_structure() {
+        let auth = Xoauth2Auth::new("u@x.com", "");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(auth.response.as_bytes())
+            .expect("response should be valid base64");
+        let sasl = String::from_utf8(decoded).expect("SASL string should be valid UTF-8");
+        assert_eq!(sasl, "user=u@x.com\x01auth=Bearer \x01\x01");
+    }
+
+    #[test]
+    fn xoauth2_authenticator_returns_same_response_on_each_call() {
+        use async_imap::Authenticator;
+        let mut auth = Xoauth2Auth::new("u@x.com", "token");
+        let first = auth.process(b"");
+        let second = auth.process(b"some challenge");
+        assert_eq!(
+            first, second,
+            "response should be identical regardless of challenge"
+        );
+    }
 }
