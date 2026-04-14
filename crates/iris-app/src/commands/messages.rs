@@ -15,12 +15,12 @@ pub async fn list_messages(
         .map_err(|e| e.to_string())
 }
 
-/// Fetch recent message headers from the IMAP server for a folder.
+/// Fetch recent message headers from the remote server for a folder.
 ///
-/// Connects to the account's IMAP server, selects the folder, fetches the
-/// most recent message headers, converts them to [`iris_core::Message`]
-/// records, and batch-inserts them into the database. Returns the messages
-/// for the folder from the database after sync.
+/// For M365 accounts, uses the Microsoft Graph API. For generic IMAP
+/// accounts, connects to the IMAP server and fetches headers by UID range.
+/// Converts results to [`iris_core::Message`] records, batch-inserts them
+/// into the database, and returns the messages for the folder.
 #[tauri::command]
 pub async fn fetch_folder_messages(
     pool: tauri::State<'_, sqlx::SqlitePool>,
@@ -38,15 +38,97 @@ pub async fn fetch_folder_messages(
         .await
         .map_err(|e| e.to_string())?;
 
+    match account.provider {
+        iris_core::Provider::M365 => {
+            fetch_messages_via_graph(&pool, &config, &account, &folder).await?;
+        }
+        iris_core::Provider::ImapGeneric => {
+            fetch_messages_via_imap(&pool, &config, &account, &folder).await?;
+        }
+        iris_core::Provider::Gmail => {
+            return Err("Gmail not yet supported".to_string());
+        }
+    }
+
+    iris_db::repo::MessageRepo::list_by_folder(&pool, &fld_id, 50, 0)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Fetches messages from the Microsoft Graph API and persists them.
+async fn fetch_messages_via_graph(
+    pool: &sqlx::SqlitePool,
+    config: &crate::setup::AppConfig,
+    account: &iris_core::Account,
+    folder: &iris_core::Folder,
+) -> Result<(), String> {
+    let token = crate::commands::folders::load_m365_access_token(account, config).await?;
+    let client = iris_mail::GraphClient::new(token);
+    let fetched = iris_mail::fetch_graph_messages(&client, &folder.full_path, 100)
+        .await
+        .map_err(|e| {
+            tracing::error!("Graph message fetch failed: {e}");
+            e.to_string()
+        })?;
+
+    let now = Utc::now();
+    let messages: Vec<iris_core::Message> = fetched
+        .into_iter()
+        .map(|f| iris_core::Message {
+            id: iris_core::MessageId::new(),
+            account_id: account.id,
+            folder_id: folder.id,
+            uid: None,
+            remote_id: f.remote_id,
+            message_id_header: f.message_id,
+            thread_id: None,
+            subject: f.subject,
+            from_name: f.from_name,
+            from_address: f.from_address,
+            to_addresses: if f.to_addresses.is_empty() {
+                None
+            } else {
+                Some(f.to_addresses.join(", "))
+            },
+            cc_addresses: if f.cc_addresses.is_empty() {
+                None
+            } else {
+                Some(f.cc_addresses.join(", "))
+            },
+            bcc_addresses: None,
+            date: f.date,
+            size_bytes: Some(u64::from(f.size)),
+            flags: f.flags,
+            is_stored_local: true,
+            is_stored_remote: true,
+            created_at: now,
+            updated_at: now,
+        })
+        .collect();
+
+    iris_db::repo::MessageRepo::insert_batch(pool, &messages)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Fetches messages via IMAP and persists them.
+async fn fetch_messages_via_imap(
+    pool: &sqlx::SqlitePool,
+    config: &crate::setup::AppConfig,
+    account: &iris_core::Account,
+    folder: &iris_core::Folder,
+) -> Result<(), String> {
     let mut imap_client =
-        crate::commands::folders::connect_imap_for_account(&account, &config, &pool).await?;
+        crate::commands::folders::connect_imap_for_account(account, config, pool).await?;
 
     imap_client
         .select(&folder.full_path)
         .await
         .map_err(|e| e.to_string())?;
 
-    // Fetch the most recent 100 messages by UID range.
+    // Fetch the most recent messages by UID range.
     let uid_range = "1:*";
     let fetched = iris_mail::fetch_message_headers(&mut imap_client, uid_range)
         .await
@@ -87,22 +169,19 @@ pub async fn fetch_folder_messages(
         })
         .collect();
 
-    iris_db::repo::MessageRepo::insert_batch(&pool, &messages)
+    iris_db::repo::MessageRepo::insert_batch(pool, &messages)
         .await
         .map_err(|e| e.to_string())?;
 
     let _ = imap_client.logout().await;
-
-    iris_db::repo::MessageRepo::list_by_folder(&pool, &fld_id, 50, 0)
-        .await
-        .map_err(|e| e.to_string())
+    Ok(())
 }
 
-/// Retrieve the full body of a message, fetching from IMAP if not cached.
+/// Retrieve the full body of a message, fetching from the server if not cached.
 ///
-/// Checks the local database first. If the body is not found, connects to
-/// the account's IMAP server, selects the folder, fetches the body by UID,
-/// sanitises the HTML, and caches it locally before returning.
+/// Checks the local database first. If the body is not found, dispatches
+/// to the Graph API (for M365) or IMAP (for generic accounts) to fetch the
+/// body, sanitises the HTML, and caches it locally before returning.
 #[tauri::command]
 pub async fn get_message_body(
     pool: tauri::State<'_, sqlx::SqlitePool>,
@@ -119,7 +198,7 @@ pub async fn get_message_body(
         return Ok(body);
     }
 
-    // Not cached — fetch from IMAP.
+    // Not cached — fetch from the remote server.
     let message = iris_db::repo::MessageRepo::get_by_id(&pool, &msg_id)
         .await
         .map_err(|e| e.to_string())?;
@@ -130,12 +209,65 @@ pub async fn get_message_body(
         .await
         .map_err(|e| e.to_string())?;
 
+    match account.provider {
+        iris_core::Provider::M365 => fetch_body_via_graph(&pool, &config, &account, &message).await,
+        iris_core::Provider::ImapGeneric => {
+            fetch_body_via_imap(&pool, &config, &account, &folder, &message).await
+        }
+        iris_core::Provider::Gmail => Err("Gmail not yet supported".to_string()),
+    }
+}
+
+/// Fetches a message body via the Microsoft Graph API and caches it.
+async fn fetch_body_via_graph(
+    pool: &sqlx::SqlitePool,
+    config: &crate::setup::AppConfig,
+    account: &iris_core::Account,
+    message: &iris_core::Message,
+) -> Result<iris_core::MessageBody, String> {
+    let remote_id = message
+        .remote_id
+        .as_deref()
+        .ok_or("M365 message has no remote_id — cannot fetch body")?;
+
+    let token = crate::commands::folders::load_m365_access_token(account, config).await?;
+    let client = iris_mail::GraphClient::new(token);
+    let fetched = iris_mail::fetch_graph_message_body(&client, remote_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let body = iris_core::MessageBody {
+        message_id: message.id,
+        html: fetched.html,
+        sanitised_html: None, // MessageBodyRepo::upsert auto-sanitises
+        plain_text: fetched.plain_text,
+    };
+
+    iris_db::repo::MessageBodyRepo::upsert(pool, &body)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Re-read from DB to get the auto-sanitised HTML.
+    iris_db::repo::MessageBodyRepo::get_by_message_id(pool, &message.id)
+        .await
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "failed to retrieve body after upsert".to_string())
+}
+
+/// Fetches a message body via IMAP and caches it.
+async fn fetch_body_via_imap(
+    pool: &sqlx::SqlitePool,
+    config: &crate::setup::AppConfig,
+    account: &iris_core::Account,
+    folder: &iris_core::Folder,
+    message: &iris_core::Message,
+) -> Result<iris_core::MessageBody, String> {
     let uid = message
         .uid
         .ok_or("message has no IMAP UID — cannot fetch body")?;
 
     let mut imap_client =
-        crate::commands::folders::connect_imap_for_account(&account, &config, &pool).await?;
+        crate::commands::folders::connect_imap_for_account(account, config, pool).await?;
 
     imap_client
         .select(&folder.full_path)
@@ -149,18 +281,18 @@ pub async fn get_message_body(
     let _ = imap_client.logout().await;
 
     let body = iris_core::MessageBody {
-        message_id: msg_id,
+        message_id: message.id,
         html: fetched.html,
         sanitised_html: None, // MessageBodyRepo::upsert auto-sanitises
         plain_text: fetched.plain_text,
     };
 
-    iris_db::repo::MessageBodyRepo::upsert(&pool, &body)
+    iris_db::repo::MessageBodyRepo::upsert(pool, &body)
         .await
         .map_err(|e| e.to_string())?;
 
     // Re-read from DB to get the auto-sanitised HTML.
-    iris_db::repo::MessageBodyRepo::get_by_message_id(&pool, &msg_id)
+    iris_db::repo::MessageBodyRepo::get_by_message_id(pool, &message.id)
         .await
         .map_err(|e| e.to_string())?
         .ok_or_else(|| "failed to retrieve body after upsert".to_string())

@@ -13,10 +13,10 @@ pub async fn list_folders(
         .map_err(|e| e.to_string())
 }
 
-/// Discover folders from the remote IMAP server and persist them locally.
+/// Discover folders from the remote server and persist them locally.
 ///
-/// Connects to the account's IMAP server, lists all mailboxes, converts them
-/// to [`iris_core::Folder`] records, and upserts them into the database.
+/// For M365 accounts, uses the Microsoft Graph API. For generic IMAP
+/// accounts, connects to the IMAP server and issues a LIST command.
 /// Returns the full folder list for the account after sync.
 #[tauri::command]
 pub async fn sync_folders(
@@ -29,13 +29,33 @@ pub async fn sync_folders(
         .await
         .map_err(|e| e.to_string())?;
 
-    let mut imap_client = connect_imap_for_account(&account, &config, &pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    tracing::info!(
+        "Syncing folders for {} ({})",
+        account.display_name,
+        account.email_address
+    );
 
-    let discovered = iris_mail::discover_folders(&mut imap_client)
-        .await
-        .map_err(|e| e.to_string())?;
+    let discovered = match account.provider {
+        iris_core::Provider::M365 => {
+            let token = load_m365_access_token(&account, &config).await?;
+            let client = iris_mail::GraphClient::new(token);
+            iris_mail::list_graph_folders(&client).await.map_err(|e| {
+                tracing::error!("Graph folder sync failed: {e}");
+                e.to_string()
+            })?
+        }
+        iris_core::Provider::ImapGeneric => {
+            let mut imap_client = connect_imap_for_account(&account, &config, &pool).await?;
+            let result = iris_mail::discover_folders(&mut imap_client)
+                .await
+                .map_err(|e| e.to_string())?;
+            let _ = imap_client.logout().await;
+            result
+        }
+        iris_core::Provider::Gmail => {
+            return Err("Gmail not yet supported".to_string());
+        }
+    };
 
     let now = Utc::now();
     for d in &discovered {
@@ -71,11 +91,49 @@ pub async fn sync_folders(
             .map_err(|e| e.to_string())?;
     }
 
-    let _ = imap_client.logout().await;
+    tracing::info!("Synced {} folders", discovered.len());
 
     iris_db::repo::FolderRepo::list_by_account(&pool, &id)
         .await
         .map_err(|e| e.to_string())
+}
+
+/// Loads a valid M365 access token for the given account.
+///
+/// Reads OAuth tokens from the keychain, refreshes if expired, and
+/// stores the refreshed tokens back to the keychain.
+pub(crate) async fn load_m365_access_token(
+    account: &iris_core::Account,
+    config: &crate::setup::AppConfig,
+) -> Result<String, String> {
+    let kr = account.keychain_ref;
+    let mut tokens =
+        tokio::task::spawn_blocking(move || iris_mail::KeychainStore::new().load_oauth_tokens(&kr))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+
+    if tokens.is_expired() {
+        let client_id = config
+            .m365_client_id
+            .as_deref()
+            .ok_or("M365 client ID not configured — set IRIS_M365_CLIENT_ID env var")?;
+
+        tokens = iris_mail::oauth::m365::refresh_m365_token(client_id, &tokens.refresh_token)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let new_tokens = tokens.clone();
+        let kr2 = account.keychain_ref;
+        tokio::task::spawn_blocking(move || {
+            iris_mail::KeychainStore::new().store_oauth_tokens(&kr2, &new_tokens)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
+    }
+
+    Ok(tokens.access_token)
 }
 
 /// Connects to the IMAP server for the given account.
@@ -118,36 +176,11 @@ async fn connect_m365(
     config: &crate::setup::AppConfig,
     imap_server: &iris_core::ImapServer,
 ) -> Result<iris_mail::ImapClient, String> {
-    let kr = account.keychain_ref;
-    let mut tokens =
-        tokio::task::spawn_blocking(move || iris_mail::KeychainStore::new().load_oauth_tokens(&kr))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
-
-    if tokens.is_expired() {
-        let client_id = config
-            .m365_client_id
-            .as_deref()
-            .ok_or("M365 client ID not configured — set IRIS_M365_CLIENT_ID env var")?;
-
-        tokens = iris_mail::oauth::m365::refresh_m365_token(client_id, &tokens.refresh_token)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let new_tokens = tokens.clone();
-        let kr2 = account.keychain_ref;
-        tokio::task::spawn_blocking(move || {
-            iris_mail::KeychainStore::new().store_oauth_tokens(&kr2, &new_tokens)
-        })
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
-    }
+    let access_token = load_m365_access_token(account, config).await?;
 
     let auth = iris_mail::ImapAuth::Xoauth2 {
         user: &account.email_address,
-        access_token: &tokens.access_token,
+        access_token: &access_token,
     };
     iris_mail::ImapClient::connect(imap_server, auth)
         .await

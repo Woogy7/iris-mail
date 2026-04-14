@@ -1,6 +1,7 @@
 <script lang="ts">
   import { addM365Account, addImapAccount } from '$lib/api/accounts';
   import { loadAccounts } from '$lib/stores/accounts.svelte';
+  import { selectAccount, triggerFolderSync } from '$lib/stores/mail.svelte';
 
   let { isOpen, onClose }: {
     isOpen: boolean;
@@ -45,9 +46,11 @@
     isSubmitting = true;
     error = null;
     try {
-      await addM365Account(email.trim(), displayName.trim());
+      const account = await addM365Account(email.trim(), displayName.trim());
       await loadAccounts();
       handleClose();
+      await selectAccount(account.id);
+      await triggerFolderSync(account.id);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
@@ -60,13 +63,15 @@
     isSubmitting = true;
     error = null;
     try {
-      await addImapAccount({
+      const account = await addImapAccount({
         emailAddress: email.trim(),
         displayName: displayName.trim(),
         password: password.trim(),
       });
       await loadAccounts();
       handleClose();
+      await selectAccount(account.id);
+      await triggerFolderSync(account.id);
     } catch (e) {
       error = e instanceof Error ? e.message : String(e);
     } finally {
