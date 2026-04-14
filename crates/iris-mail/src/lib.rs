@@ -11,6 +11,7 @@ pub mod smtp;
 
 pub use discovery::discover_servers;
 pub use imap::client::{ImapAuth, ImapClient};
+pub use imap::folders::{DiscoveredFolder, discover_folders};
 pub use oauth::{OauthTokens, keychain::KeychainStore};
 pub use smtp::validate_smtp_connection;
 
