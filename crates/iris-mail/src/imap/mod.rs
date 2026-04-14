@@ -1,5 +1,7 @@
 //! IMAP client operations: connection, folder discovery, message fetching.
 
 pub mod client;
-pub mod idle;
-pub mod sync;
+mod idle;
+mod sync;
+
+pub use client::ImapClient;
