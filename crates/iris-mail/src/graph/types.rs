@@ -134,3 +134,21 @@ pub(crate) struct GraphMessageWithBody {
     /// When the message was received (ISO 8601).
     pub received_date_time: Option<String>,
 }
+
+/// An attachment from the Graph API.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct GraphAttachment {
+    /// Whether this attachment is inline (embedded in the body via cid:).
+    #[serde(default)]
+    pub is_inline: bool,
+    /// The Content-ID for inline attachments (without angle brackets).
+    #[serde(default)]
+    pub content_id: Option<String>,
+    /// MIME type (e.g. "image/png").
+    #[serde(default)]
+    pub content_type: Option<String>,
+    /// Base64-encoded content bytes.
+    #[serde(default)]
+    pub content_bytes: Option<String>,
+}

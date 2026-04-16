@@ -4,7 +4,7 @@
 //! the full body of a single message by its Graph ID.
 
 use crate::graph::client::GraphClient;
-use crate::graph::types::{GraphMessage, GraphMessageWithBody, GraphResponse};
+use crate::graph::types::{GraphAttachment, GraphMessage, GraphMessageWithBody, GraphResponse};
 use crate::imap::fetch::{FetchedBody, FetchedMessage};
 use iris_core::MessageFlags;
 
@@ -45,6 +45,9 @@ pub async fn fetch_graph_messages(
 }
 
 /// Fetches the full body of a single message by its Graph ID.
+///
+/// Also fetches inline attachments and resolves `cid:` references in the HTML
+/// body by replacing them with `data:` URIs so embedded images render correctly.
 pub async fn fetch_graph_message_body(
     client: &GraphClient,
     message_id: &str,
@@ -56,7 +59,7 @@ pub async fn fetch_graph_message_body(
         .await
         .map_err(|e| crate::Error::Graph(format!("failed to parse message body: {e}")))?;
 
-    let (html, plain_text) = match data.body {
+    let (mut html, plain_text) = match data.body {
         Some(body) => match body.content_type.as_deref() {
             Some("html") => (body.content, None),
             Some("text") => (None, body.content),
@@ -65,11 +68,48 @@ pub async fn fetch_graph_message_body(
         None => (None, None),
     };
 
+    // Resolve inline images: fetch attachments and replace cid: references.
+    if html.is_some() {
+        if let Ok(attachments) = fetch_inline_attachments(client, message_id).await {
+            if let Some(ref mut html_content) = html {
+                for att in &attachments {
+                    if let (Some(cid), Some(content_type), Some(content_bytes)) =
+                        (&att.content_id, &att.content_type, &att.content_bytes)
+                    {
+                        let data_uri = format!("data:{content_type};base64,{content_bytes}");
+                        // Replace both "cid:contentId" and "cid:contentId" (with or without angle brackets).
+                        *html_content = html_content.replace(
+                            &format!("cid:{cid}"),
+                            &data_uri,
+                        );
+                    }
+                }
+            }
+        }
+    }
+
     Ok(FetchedBody {
         uid: 0,
         html,
         plain_text,
     })
+}
+
+/// Fetches inline attachments for a message.
+async fn fetch_inline_attachments(
+    client: &GraphClient,
+    message_id: &str,
+) -> crate::Result<Vec<GraphAttachment>> {
+    let path = format!(
+        "/me/messages/{message_id}/attachments?$select=isInline,contentId,contentType,contentBytes"
+    );
+    let resp = client.get(&path).await?;
+    let data: GraphResponse<GraphAttachment> = resp
+        .json()
+        .await
+        .map_err(|e| crate::Error::Graph(format!("failed to parse attachments: {e}")))?;
+
+    Ok(data.value.into_iter().filter(|a| a.is_inline).collect())
 }
 
 /// Converts a [`GraphMessage`] into a [`FetchedMessage`].
