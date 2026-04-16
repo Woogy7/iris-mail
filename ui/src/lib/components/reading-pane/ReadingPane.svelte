@@ -12,6 +12,22 @@
     messages.find(m => m.id === selectedMessageId) ?? null
   );
 
+  let showRemoteImages = $state(false);
+
+  // Reset show-images when switching messages.
+  $effect(() => {
+    if (selectedMessageId) {
+      showRemoteImages = false;
+    }
+  });
+
+  // The body HTML with or without remote images.
+  let displayHtml = $derived(() => {
+    if (!body?.sanitised_html) return null;
+    if (showRemoteImages) return body.html ?? body.sanitised_html;
+    return body.sanitised_html;
+  });
+
   function formatFullDate(dateStr: string | null): string {
     if (!dateStr) return '';
     const date = new Date(dateStr);
@@ -26,7 +42,7 @@
   }
 </script>
 
-<section class="flex flex-col h-full border-l border-ctp-surface0 bg-ctp-base">
+<section class="flex flex-col h-full min-h-0 border-l border-ctp-surface0 bg-ctp-base">
   {#if !selectedMessageId}
     <div class="flex flex-1 items-center justify-center px-4">
       <p class="text-sm text-ctp-overlay0 text-center">Select a message to read</p>
@@ -53,21 +69,24 @@
       </p>
     </div>
 
-    {#if body?.sanitised_html}
-      <div class="bg-ctp-surface0 text-ctp-subtext0 text-xs px-4 py-2 flex items-center justify-between">
+    {#if body?.sanitised_html && !showRemoteImages}
+      <div class="bg-ctp-surface0 text-ctp-subtext0 text-xs px-4 py-2 flex items-center justify-between shrink-0">
         <span>Remote images are blocked</span>
-        <button class="text-ctp-mauve hover:text-ctp-text transition-colors">
+        <button
+          class="text-ctp-mauve hover:text-ctp-text transition-colors"
+          onclick={() => { showRemoteImages = true; }}
+        >
           Show images
         </button>
       </div>
     {/if}
 
-    <div class="h-px bg-ctp-surface0"></div>
+    <div class="h-px bg-ctp-surface0 shrink-0"></div>
 
-    <div class="flex-1 overflow-y-auto">
-      {#if body?.sanitised_html}
+    <div class="flex-1 overflow-y-auto min-h-0">
+      {#if body?.sanitised_html || body?.html}
         <div class="p-4 prose-email">
-          {@html body.sanitised_html}
+          {@html displayHtml()}
         </div>
       {:else if body?.plain_text}
         <pre class="whitespace-pre-wrap font-mono text-sm text-ctp-text p-4">{body.plain_text}</pre>

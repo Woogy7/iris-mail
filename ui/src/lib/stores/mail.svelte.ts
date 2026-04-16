@@ -2,6 +2,7 @@ import { listFolders, syncFolders, type Folder } from '$lib/api/folders';
 import {
   listMessages,
   getMessageBody,
+  markMessageRead,
   syncAccount,
   syncAllAccounts,
   type Message,
@@ -100,6 +101,18 @@ export async function selectMessage(messageId: string) {
   isLoadingBody = true;
   try {
     messageBody = await getMessageBody(messageId);
+
+    // Mark as read locally and on server.
+    const msg = messages.find(m => m.id === messageId);
+    if (msg && !msg.flags.is_read) {
+      msg.flags.is_read = true;
+      // Trigger reactivity by reassigning the array.
+      messages = [...messages];
+      // Update server + DB in background (don't block the UI).
+      markMessageRead(messageId).catch(e =>
+        console.error('Failed to mark message read:', e)
+      );
+    }
   } catch (e) {
     console.error('Failed to load message body:', e);
   } finally {
