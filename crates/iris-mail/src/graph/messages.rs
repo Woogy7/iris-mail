@@ -70,20 +70,29 @@ pub async fn fetch_graph_message_body(
 
     // Resolve inline images: fetch attachments and replace cid: references.
     if html.is_some() {
-        if let Ok(attachments) = fetch_inline_attachments(client, message_id).await {
-            if let Some(ref mut html_content) = html {
-                for att in &attachments {
-                    if let (Some(cid), Some(content_type), Some(content_bytes)) =
-                        (&att.content_id, &att.content_type, &att.content_bytes)
-                    {
-                        let data_uri = format!("data:{content_type};base64,{content_bytes}");
-                        // Replace both "cid:contentId" and "cid:contentId" (with or without angle brackets).
-                        *html_content = html_content.replace(
-                            &format!("cid:{cid}"),
-                            &data_uri,
-                        );
+        match fetch_inline_attachments(client, message_id).await {
+            Ok(attachments) => {
+                if let Some(ref mut html_content) = html {
+                    for att in &attachments {
+                        if let (Some(cid), Some(content_type), Some(content_bytes)) =
+                            (&att.content_id, &att.content_type, &att.content_bytes)
+                        {
+                            let data_uri = format!("data:{content_type};base64,{content_bytes}");
+                            let stripped_cid = cid.trim_start_matches('<').trim_end_matches('>');
+                            *html_content = html_content.replace(
+                                &format!("cid:{cid}"),
+                                &data_uri,
+                            );
+                            *html_content = html_content.replace(
+                                &format!("cid:{stripped_cid}"),
+                                &data_uri,
+                            );
+                        }
                     }
                 }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to fetch inline attachments for {message_id}: {e}");
             }
         }
     }
@@ -100,9 +109,7 @@ async fn fetch_inline_attachments(
     client: &GraphClient,
     message_id: &str,
 ) -> crate::Result<Vec<GraphAttachment>> {
-    let path = format!(
-        "/me/messages/{message_id}/attachments?$select=isInline,contentId,contentType,contentBytes"
-    );
+    let path = format!("/me/messages/{message_id}/attachments");
     let resp = client.get(&path).await?;
     let data: GraphResponse<GraphAttachment> = resp
         .json()
