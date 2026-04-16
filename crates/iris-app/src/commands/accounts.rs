@@ -52,10 +52,11 @@ pub async fn add_m365_account(
     let account_id = iris_core::AccountId::new();
     let keychain_ref = account_id.0;
 
-    // Store OAuth tokens in the OS keychain (blocking I/O).
-    let tokens_clone = tokens.clone();
+    // Store only the refresh token in the keychain (access tokens are too large
+    // for some Secret Service backends and are short-lived anyway).
+    let refresh_token = tokens.refresh_token.clone();
     tokio::task::spawn_blocking(move || {
-        iris_mail::KeychainStore::new().store_oauth_tokens(&keychain_ref, &tokens_clone)
+        iris_mail::KeychainStore::new().store_refresh_token(&keychain_ref, &refresh_token)
     })
     .await
     .map_err(|e| e.to_string())?
@@ -151,7 +152,7 @@ pub async fn remove_account(
     let kr = id.0;
     let _ = tokio::task::spawn_blocking(move || {
         let keychain = iris_mail::KeychainStore::new();
-        let _ = keychain.delete_oauth_tokens(&kr);
+        let _ = keychain.delete_refresh_token(&kr);
         let _ = keychain.delete_password(&kr);
     })
     .await;

@@ -109,33 +109,39 @@ pub(crate) async fn sync_folders_inner(
 
 /// Loads a valid M365 access token for the given account.
 ///
-/// Reads OAuth tokens from the keychain, refreshes if expired, and
-/// stores the refreshed tokens back to the keychain.
+/// Reads the refresh token from the keychain and exchanges it for a fresh
+/// access token via the Microsoft token endpoint. The refresh token in the
+/// keychain is updated if the server issues a new one.
 pub(crate) async fn load_m365_access_token(
     account: &iris_core::Account,
     config: &crate::setup::AppConfig,
 ) -> Result<String, String> {
+    let client_id = config
+        .m365_client_id
+        .as_deref()
+        .ok_or("M365 client ID not configured — set IRIS_M365_CLIENT_ID env var")?;
+
     let kr = account.keychain_ref;
-    let mut tokens =
-        tokio::task::spawn_blocking(move || iris_mail::KeychainStore::new().load_oauth_tokens(&kr))
-            .await
-            .map_err(|e| e.to_string())?
-            .map_err(|e| e.to_string())?;
+    let refresh_token = tokio::task::spawn_blocking(move || {
+        iris_mail::KeychainStore::new().load_refresh_token(&kr)
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
 
-    if tokens.is_expired() {
-        let client_id = config
-            .m365_client_id
-            .as_deref()
-            .ok_or("M365 client ID not configured — set IRIS_M365_CLIENT_ID env var")?;
+    let tokens = iris_mail::oauth::m365::refresh_m365_token(client_id, &refresh_token)
+        .await
+        .map_err(|e| {
+            tracing::error!("Token refresh failed for {}: {e}", account.email_address);
+            e.to_string()
+        })?;
 
-        tokens = iris_mail::oauth::m365::refresh_m365_token(client_id, &tokens.refresh_token)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let new_tokens = tokens.clone();
+    // Store the (possibly rotated) refresh token back to keychain.
+    if tokens.refresh_token != refresh_token {
+        let new_rt = tokens.refresh_token.clone();
         let kr2 = account.keychain_ref;
         tokio::task::spawn_blocking(move || {
-            iris_mail::KeychainStore::new().store_oauth_tokens(&kr2, &new_tokens)
+            iris_mail::KeychainStore::new().store_refresh_token(&kr2, &new_rt)
         })
         .await
         .map_err(|e| e.to_string())?
