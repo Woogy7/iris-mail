@@ -108,6 +108,12 @@ export async function selectMessage(messageId: string) {
       msg.flags.is_read = true;
       // Trigger reactivity by reassigning the array.
       messages = [...messages];
+      // Decrement the folder's unread count in the sidebar.
+      const folder = folders.find(f => f.id === selectedFolderId);
+      if (folder && folder.unread_count > 0) {
+        folder.unread_count -= 1;
+        folders = [...folders];
+      }
       // Update server + DB in background (don't block the UI).
       markMessageRead(messageId).catch(e =>
         console.error('Failed to mark message read:', e)

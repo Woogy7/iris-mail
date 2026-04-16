@@ -21,11 +21,17 @@
     }
   });
 
+  /// Strip src attributes from img tags to block remote image loading.
+  function stripImageSources(html: string): string {
+    return html.replace(/<img\b([^>]*)\bsrc\s*=\s*["'][^"']*["']/gi, '<img$1data-blocked-src=""');
+  }
+
   // The body HTML with or without remote images.
   let displayHtml = $derived(() => {
-    if (!body?.sanitised_html) return null;
-    if (showRemoteImages) return body.html ?? body.sanitised_html;
-    return body.sanitised_html;
+    const html = body?.sanitised_html ?? body?.html;
+    if (!html) return null;
+    if (showRemoteImages) return body?.html ?? html;
+    return stripImageSources(html);
   });
 
   function formatFullDate(dateStr: string | null): string {
@@ -69,7 +75,7 @@
       </p>
     </div>
 
-    {#if body?.sanitised_html && !showRemoteImages}
+    {#if (body?.sanitised_html || body?.html) && !showRemoteImages}
       <div class="bg-ctp-surface0 text-ctp-subtext0 text-xs px-4 py-2 flex items-center justify-between shrink-0">
         <span>Remote images are blocked</span>
         <button
