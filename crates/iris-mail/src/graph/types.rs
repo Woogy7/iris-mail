@@ -8,7 +8,6 @@ use serde::Deserialize;
 
 /// A paginated response wrapper used by all Graph API list endpoints.
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Fields used for deserialization; pagination support is upcoming.
 pub(crate) struct GraphResponse<T> {
     /// The items in this page of results.
     pub value: Vec<T>,
