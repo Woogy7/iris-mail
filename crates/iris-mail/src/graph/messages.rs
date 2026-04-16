@@ -4,15 +4,23 @@
 //! the full body of a single message by its Graph ID.
 
 use crate::graph::client::GraphClient;
+use crate::graph::pagination::paginate;
 use crate::graph::types::{GraphAttachment, GraphMessage, GraphMessageWithBody, GraphResponse};
 use crate::imap::fetch::{FetchedBody, FetchedMessage};
 use iris_core::MessageFlags;
+
+/// Graph default page size; the upper bound is supplied by the caller via `limit`.
+const MESSAGE_PAGE_SIZE: u32 = 100;
 
 /// Fetches message headers from a Graph mail folder.
 ///
 /// The `folder_id` is the opaque Graph folder ID returned by
 /// [`super::folders::list_graph_folders`]. Returns up to `limit` messages,
-/// newest first.
+/// newest first, paginating internally; per-request page size is fixed at
+/// [`MESSAGE_PAGE_SIZE`] and `limit` is a total cap across all pages.
+///
+/// Callers passing `limit = 100` see identical behaviour to the prior
+/// single-page implementation (one HTTP request, up to 100 messages).
 pub async fn fetch_graph_messages(
     client: &GraphClient,
     folder_id: &str,
@@ -20,22 +28,17 @@ pub async fn fetch_graph_messages(
 ) -> crate::Result<Vec<FetchedMessage>> {
     let path = format!(
         "/me/mailFolders/{folder_id}/messages\
-         ?$top={limit}\
+         ?$top={MESSAGE_PAGE_SIZE}\
          &$orderby=receivedDateTime desc\
          &$select=id,subject,from,toRecipients,ccRecipients,\
          receivedDateTime,isRead,flag,hasAttachments,bodyPreview,\
          internetMessageId,conversationId"
     );
 
-    let resp = client.get(&path).await?;
-    let data: GraphResponse<GraphMessage> = resp
-        .json()
-        .await
-        .map_err(|e| crate::Error::Graph(format!("failed to parse message response: {e}")))?;
+    let graph_messages = paginate::<GraphMessage>(client, &path, limit as usize).await?;
 
-    let count = data.value.len();
-    let messages = data
-        .value
+    let count = graph_messages.len();
+    let messages = graph_messages
         .into_iter()
         .map(graph_message_to_fetched)
         .collect();
@@ -79,14 +82,9 @@ pub async fn fetch_graph_message_body(
                         {
                             let data_uri = format!("data:{content_type};base64,{content_bytes}");
                             let stripped_cid = cid.trim_start_matches('<').trim_end_matches('>');
-                            *html_content = html_content.replace(
-                                &format!("cid:{cid}"),
-                                &data_uri,
-                            );
-                            *html_content = html_content.replace(
-                                &format!("cid:{stripped_cid}"),
-                                &data_uri,
-                            );
+                            *html_content = html_content.replace(&format!("cid:{cid}"), &data_uri);
+                            *html_content =
+                                html_content.replace(&format!("cid:{stripped_cid}"), &data_uri);
                         }
                     }
                 }
