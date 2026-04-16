@@ -7,4 +7,5 @@
 pub mod client;
 pub mod folders;
 pub mod messages;
+pub(crate) mod pagination;
 pub(crate) mod types;

@@ -4,7 +4,7 @@
 //! and error mapping for all Graph API calls.
 
 /// Base URL for Microsoft Graph API v1.0 endpoints.
-const GRAPH_BASE_URL: &str = "https://graph.microsoft.com/v1.0";
+pub(crate) const GRAPH_BASE_URL: &str = "https://graph.microsoft.com/v1.0";
 
 /// An authenticated Microsoft Graph API client.
 ///

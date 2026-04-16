@@ -30,3 +30,6 @@ rand = { workspace = true }
 open = { workspace = true }
 sha2 = { workspace = true }
 futures = { workspace = true }
+
+[dev-dependencies]
+wiremock = "0.6"
