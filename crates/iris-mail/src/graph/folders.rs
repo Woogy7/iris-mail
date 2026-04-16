@@ -6,22 +6,29 @@
 use iris_core::SpecialFolder;
 
 use crate::graph::client::GraphClient;
-use crate::graph::types::{GraphFolder, GraphResponse};
+use crate::graph::pagination::paginate;
+use crate::graph::types::GraphFolder;
 use crate::imap::folders::DiscoveredFolder;
+
+/// Sanity cap on the number of folders fetched from Graph.
+///
+/// Real mailboxes have at most a few dozen folders; 1000 is comfortably above
+/// any plausible mailbox layout while still bounding memory and request
+/// volume against a misbehaving server. This is **not** a product limit —
+/// users are not expected to hit it.
+const FOLDER_PAGE_CAP: usize = 1000;
 
 /// Lists all mail folders for the authenticated M365 user.
 ///
 /// Returns [`DiscoveredFolder`] values where `full_path` is the opaque Graph
-/// folder ID (used in subsequent API calls to list messages).
+/// folder ID (used in subsequent API calls to list messages). Pagination is
+/// handled transparently up to [`FOLDER_PAGE_CAP`] folders.
 pub async fn list_graph_folders(client: &GraphClient) -> crate::Result<Vec<DiscoveredFolder>> {
-    let resp = client.get("/me/mailFolders?$top=100").await?;
-    let data: GraphResponse<GraphFolder> = resp
-        .json()
-        .await
-        .map_err(|e| crate::Error::Graph(format!("failed to parse folder response: {e}")))?;
+    let graph_folders =
+        paginate::<GraphFolder>(client, "/me/mailFolders?$top=100", FOLDER_PAGE_CAP).await?;
 
-    let mut folders = Vec::new();
-    for gf in data.value {
+    let mut folders = Vec::with_capacity(graph_folders.len());
+    for gf in graph_folders {
         let special = map_well_known_name(gf.well_known_name.as_deref(), &gf.display_name);
         folders.push(DiscoveredFolder {
             full_path: gf.id.clone(),

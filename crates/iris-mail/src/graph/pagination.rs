@@ -42,7 +42,6 @@ use crate::graph::types::GraphResponse;
 ///
 /// Returns `Err(crate::Error::Graph(...))` on the first fetch or
 /// deserialisation failure; partial results are not returned on error.
-#[allow(dead_code)] // Wired up by folders.rs / messages.rs in subsequent tasks.
 pub(crate) async fn paginate<T>(
     client: &GraphClient,
     initial_path: &str,
@@ -60,7 +59,7 @@ where
 ///
 /// Exposed at `pub(crate)` visibility so tests can target a local
 /// `wiremock::MockServer`. Production callers should use [`paginate`].
-#[allow(dead_code)] // Used via `paginate` in subsequent tasks; called directly by unit tests today.
+#[allow(dead_code)] // Reached via `paginate` in production; called directly only by unit tests.
 pub(crate) async fn paginate_from_url<T>(
     client: &GraphClient,
     initial_url: &str,
