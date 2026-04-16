@@ -41,11 +41,7 @@ pub async fn sync_account(
         match sync_folder_messages(&pool, &config, &account, folder).await {
             Ok(count) => {
                 if count > 0 {
-                    tracing::info!(
-                        "  {} — fetched {} new messages",
-                        folder.name,
-                        count
-                    );
+                    tracing::info!("  {} — fetched {} new messages", folder.name, count);
                 }
             }
             Err(e) => {
@@ -91,11 +87,7 @@ async fn sync_account_inner(
         match sync_folder_messages(pool, config, account, folder).await {
             Ok(count) => {
                 if count > 0 {
-                    tracing::info!(
-                        "  {} — fetched {} new messages",
-                        folder.name,
-                        count
-                    );
+                    tracing::info!("  {} — fetched {} new messages", folder.name, count);
                 }
             }
             Err(e) => {
@@ -116,8 +108,7 @@ async fn sync_folder_messages(
 ) -> Result<u64, String> {
     match account.provider {
         iris_core::Provider::M365 => {
-            let token =
-                crate::commands::folders::load_m365_access_token(account, config).await?;
+            let token = crate::commands::folders::load_m365_access_token(account, config).await?;
             let client = iris_mail::GraphClient::new(token);
             let fetched = iris_mail::fetch_graph_messages(&client, &folder.full_path, 100)
                 .await
@@ -128,11 +119,10 @@ async fn sync_folder_messages(
             let now = chrono::Utc::now();
             for f in fetched {
                 if let Some(ref rid) = f.remote_id {
-                    let exists = iris_db::repo::MessageRepo::get_by_remote_id(
-                        pool, &account.id, rid,
-                    )
-                    .await
-                    .map_err(|e| e.to_string())?;
+                    let exists =
+                        iris_db::repo::MessageRepo::get_by_remote_id(pool, &account.id, rid)
+                            .await
+                            .map_err(|e| e.to_string())?;
                     if exists.is_some() {
                         continue;
                     }
@@ -177,6 +167,18 @@ async fn sync_folder_messages(
                 .await
                 .map_err(|e| e.to_string())?;
 
+            // Update the folder's cached message and unread counts.
+            let (total, unread) = iris_db::repo::MessageRepo::count_by_folder(pool, &folder.id)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let mut updated_folder = folder.clone();
+            updated_folder.message_count = total;
+            updated_folder.unread_count = unread;
+            iris_db::repo::FolderRepo::upsert(pool, &updated_folder)
+                .await
+                .map_err(|e| e.to_string())?;
+
             Ok(count)
         }
         iris_core::Provider::ImapGeneric => {
@@ -196,11 +198,9 @@ async fn sync_folder_messages(
             let mut new_messages = Vec::new();
             let now = chrono::Utc::now();
             for f in fetched {
-                let exists = iris_db::repo::MessageRepo::get_by_uid(
-                    pool, &folder.id, f.uid,
-                )
-                .await
-                .map_err(|e| e.to_string())?;
+                let exists = iris_db::repo::MessageRepo::get_by_uid(pool, &folder.id, f.uid)
+                    .await
+                    .map_err(|e| e.to_string())?;
                 if exists.is_some() {
                     continue;
                 }
@@ -243,6 +243,18 @@ async fn sync_folder_messages(
             }
 
             let count = iris_db::repo::MessageRepo::insert_batch(pool, &new_messages)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            // Update the folder's cached message and unread counts.
+            let (total, unread) = iris_db::repo::MessageRepo::count_by_folder(pool, &folder.id)
+                .await
+                .map_err(|e| e.to_string())?;
+
+            let mut updated_folder = folder.clone();
+            updated_folder.message_count = total;
+            updated_folder.unread_count = unread;
+            iris_db::repo::FolderRepo::upsert(pool, &updated_folder)
                 .await
                 .map_err(|e| e.to_string())?;
 

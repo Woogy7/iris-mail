@@ -54,6 +54,10 @@ export async function getMessageBody(messageId: string): Promise<MessageBody> {
   return invoke<MessageBody>('get_message_body', { messageId });
 }
 
+export async function markMessageRead(messageId: string): Promise<void> {
+  return invoke<void>('mark_message_read', { messageId });
+}
+
 export async function syncAccount(accountId: string): Promise<void> {
   return invoke<void>('sync_account', { accountId });
 }

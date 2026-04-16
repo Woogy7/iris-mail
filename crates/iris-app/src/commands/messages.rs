@@ -177,6 +177,52 @@ async fn fetch_messages_via_imap(
     Ok(())
 }
 
+/// Mark a message as read both locally and on the remote server.
+///
+/// Updates the `is_read` flag in the local database immediately. For M365
+/// accounts, also sends a best-effort PATCH to the Graph API so the read
+/// state is reflected server-side. Remote failures are silently ignored —
+/// the next full sync will reconcile.
+#[tauri::command]
+pub async fn mark_message_read(
+    pool: tauri::State<'_, sqlx::SqlitePool>,
+    config: tauri::State<'_, crate::setup::AppConfig>,
+    message_id: String,
+) -> Result<(), String> {
+    let msg_id = parse_message_id(&message_id)?;
+
+    // Update local DB flags.
+    let message = iris_db::repo::MessageRepo::get_by_id(&pool, &msg_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let mut flags = message.flags;
+    flags.is_read = true;
+    iris_db::repo::MessageRepo::update_flags(&pool, &msg_id, &flags)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Mark as read on the remote server (best-effort, don't fail if it errors).
+    let account = iris_db::repo::AccountRepo::get_by_id(&pool, &message.account_id)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if account.provider == iris_core::Provider::M365
+        && let Some(ref remote_id) = message.remote_id
+    {
+        let token = crate::commands::folders::load_m365_access_token(&account, &config).await;
+        if let Ok(token) = token {
+            let client = iris_mail::GraphClient::new(token);
+            let path = format!("/me/messages/{remote_id}");
+            let _ = client
+                .patch_json(&path, &serde_json::json!({"isRead": true}))
+                .await;
+        }
+    }
+
+    Ok(())
+}
+
 /// Retrieve the full body of a message, fetching from the server if not cached.
 ///
 /// Checks the local database first. If the body is not found, dispatches

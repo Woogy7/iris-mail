@@ -29,6 +29,7 @@ fn main() {
             commands::messages::list_messages,
             commands::messages::fetch_folder_messages,
             commands::messages::get_message_body,
+            commands::messages::mark_message_read,
             commands::sync::sync_account,
             commands::sync::sync_all_accounts,
         ])

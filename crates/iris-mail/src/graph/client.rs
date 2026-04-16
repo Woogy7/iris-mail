@@ -32,6 +32,31 @@ impl GraphClient {
         self.get_url(&url).await
     }
 
+    /// Sends an authenticated PATCH request to a Graph API path with a JSON body.
+    ///
+    /// The `path` is appended to the Graph base URL. Returns an error only on
+    /// network or HTTP failures; callers may choose to ignore the result for
+    /// best-effort operations like marking messages as read.
+    pub async fn patch_json(&self, path: &str, body: &impl serde::Serialize) -> crate::Result<()> {
+        let url = format!("{GRAPH_BASE_URL}{path}");
+        let resp = self
+            .http
+            .patch(&url)
+            .bearer_auth(&self.access_token)
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| crate::Error::Graph(format!("PATCH request failed: {e}")))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_else(|_| "no body".to_string());
+            return Err(crate::Error::Graph(format!("HTTP {status}: {body}")));
+        }
+
+        Ok(())
+    }
+
     /// Sends an authenticated GET request to an absolute URL.
     ///
     /// Used for pagination when following `@odata.nextLink` URLs.
