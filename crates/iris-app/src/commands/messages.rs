@@ -2,15 +2,21 @@ use chrono::Utc;
 use uuid::Uuid;
 
 /// Maximum number of messages to fetch per folder from the Microsoft Graph API
-/// in a single sync pass.
+/// in a single sync pass, and the matching DB-side cap on messages returned to
+/// the UI when the caller does not specify a limit.
 ///
 /// The underlying `iris_mail::fetch_graph_messages` helper paginates internally
 /// (page size = 100), so this is the total cap across all pages, not a per-page
 /// limit. At ~10 HTTP calls per folder open in the worst case, this is the
-/// upper bound before progressive sync (workflow #3) takes over.
+/// upper bound before progressive sync (workflow #3) takes over. Keeping the
+/// upstream (Graph fetch) and downstream (DB list) limits in sync ensures we
+/// don't fetch 1000 messages only to surface 50 in the pane.
 pub(crate) const MESSAGES_PER_FOLDER_CAP: u32 = 1000;
 
 /// List messages in a folder with pagination.
+///
+/// When `limit` is omitted the per-folder display cap (`MESSAGES_PER_FOLDER_CAP`)
+/// is used so the DB-side list matches what the Graph fetch pulls down.
 #[tauri::command]
 pub async fn list_messages(
     pool: tauri::State<'_, sqlx::SqlitePool>,
@@ -19,9 +25,14 @@ pub async fn list_messages(
     offset: Option<i64>,
 ) -> Result<Vec<iris_core::Message>, String> {
     let id = parse_folder_id(&folder_id)?;
-    iris_db::repo::MessageRepo::list_by_folder(&pool, &id, limit.unwrap_or(50), offset.unwrap_or(0))
-        .await
-        .map_err(|e| e.to_string())
+    iris_db::repo::MessageRepo::list_by_folder(
+        &pool,
+        &id,
+        limit.unwrap_or(i64::from(MESSAGES_PER_FOLDER_CAP)),
+        offset.unwrap_or(0),
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Fetch recent message headers from the remote server for a folder.
@@ -59,9 +70,14 @@ pub async fn fetch_folder_messages(
         }
     }
 
-    iris_db::repo::MessageRepo::list_by_folder(&pool, &fld_id, 50, 0)
-        .await
-        .map_err(|e| e.to_string())
+    iris_db::repo::MessageRepo::list_by_folder(
+        &pool,
+        &fld_id,
+        i64::from(MESSAGES_PER_FOLDER_CAP),
+        0,
+    )
+    .await
+    .map_err(|e| e.to_string())
 }
 
 /// Fetches messages from the Microsoft Graph API and persists them.
