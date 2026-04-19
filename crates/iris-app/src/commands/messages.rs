@@ -1,6 +1,15 @@
 use chrono::Utc;
 use uuid::Uuid;
 
+/// Maximum number of messages to fetch per folder from the Microsoft Graph API
+/// in a single sync pass.
+///
+/// The underlying `iris_mail::fetch_graph_messages` helper paginates internally
+/// (page size = 100), so this is the total cap across all pages, not a per-page
+/// limit. At ~10 HTTP calls per folder open in the worst case, this is the
+/// upper bound before progressive sync (workflow #3) takes over.
+pub(crate) const MESSAGES_PER_FOLDER_CAP: u32 = 1000;
+
 /// List messages in a folder with pagination.
 #[tauri::command]
 pub async fn list_messages(
@@ -64,12 +73,13 @@ async fn fetch_messages_via_graph(
 ) -> Result<(), String> {
     let token = crate::commands::folders::load_m365_access_token(account, config).await?;
     let client = iris_mail::GraphClient::new(token);
-    let fetched = iris_mail::fetch_graph_messages(&client, &folder.full_path, 100)
-        .await
-        .map_err(|e| {
-            tracing::error!("Graph message fetch failed: {e}");
-            e.to_string()
-        })?;
+    let fetched =
+        iris_mail::fetch_graph_messages(&client, &folder.full_path, MESSAGES_PER_FOLDER_CAP)
+            .await
+            .map_err(|e| {
+                tracing::error!("Graph message fetch failed: {e}");
+                e.to_string()
+            })?;
 
     let now = Utc::now();
     let messages: Vec<iris_core::Message> = fetched

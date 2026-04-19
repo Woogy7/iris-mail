@@ -110,9 +110,13 @@ async fn sync_folder_messages(
         iris_core::Provider::M365 => {
             let token = crate::commands::folders::load_m365_access_token(account, config).await?;
             let client = iris_mail::GraphClient::new(token);
-            let fetched = iris_mail::fetch_graph_messages(&client, &folder.full_path, 100)
-                .await
-                .map_err(|e| e.to_string())?;
+            let fetched = iris_mail::fetch_graph_messages(
+                &client,
+                &folder.full_path,
+                crate::commands::messages::MESSAGES_PER_FOLDER_CAP,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
 
             // Filter out messages we already have (by remote_id).
             let mut new_messages = Vec::new();
