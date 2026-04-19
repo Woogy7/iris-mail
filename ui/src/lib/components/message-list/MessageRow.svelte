@@ -35,6 +35,7 @@
 <button
   class="w-full text-left px-3 py-2 flex items-start gap-2 border-b border-ctp-surface0/50 transition-colors
          {isSelected ? 'bg-ctp-surface0' : 'hover:bg-ctp-surface0/50'}"
+  data-message-id={message.id}
   onclick={onSelect}
 >
   <div class="mt-2 shrink-0 w-2 flex items-center justify-center">
